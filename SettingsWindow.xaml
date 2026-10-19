@@ -1,0 +1,29 @@
+﻿<Window x:Class="DynamicIslandDesktop.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Setting"
+        Width="340" Height="290"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="#0F0F0F">
+
+    <StackPanel Margin="22">
+        <TextBlock Text="Setting" Foreground="White" FontSize="16" FontWeight="Bold" Margin="0,0,0,16"/>
+
+        <!-- Ukuran font lirik: island ikut membesar/mengecil saat mode lirik aktif -->
+        <TextBlock Foreground="White" Margin="0,0,0,4">
+            <Run Text="Ukuran font lirik: "/><Run Text="{Binding LyricFontSize, Mode=OneWay, StringFormat={}{0:0}}" FontWeight="Bold"/>
+        </TextBlock>
+        <Slider Minimum="12" Maximum="22" TickFrequency="1" IsSnapToTickEnabled="True"
+                Value="{Binding LyricFontSize}" Margin="0,0,0,18"/>
+
+        <CheckBox Content="Putar album art saat musik diputar"
+                  IsChecked="{Binding RotateAlbumArt}"
+                  Foreground="White" Margin="0,0,0,12"/>
+
+        <CheckBox Content="Selalu di atas jendela lain"
+                  IsChecked="{Binding AlwaysOnTop}"
+                  Foreground="White"/>
+    </StackPanel>
+</Window>
