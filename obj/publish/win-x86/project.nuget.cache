@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "dgSpecHash": "hvpzBzU7V4U=",
+  "success": true,
+  "projectFilePath": "C:\\AryaFolder\\projectKantor\\projectKantor\\dynamic\\DynamicIsle\\DynamicIslandDesktop\\DynamicIslandDesktop.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\auls\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x86\\8.0.23\\microsoft.netcore.app.runtime.win-x86.8.0.23.nupkg.sha512",
+    "C:\\Users\\auls\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x86\\8.0.23\\microsoft.windowsdesktop.app.runtime.win-x86.8.0.23.nupkg.sha512",
+    "C:\\Users\\auls\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x86\\8.0.23\\microsoft.aspnetcore.app.runtime.win-x86.8.0.23.nupkg.sha512",
+    "C:\\Users\\auls\\.nuget\\packages\\microsoft.windows.sdk.net.ref\\10.0.19041.57\\microsoft.windows.sdk.net.ref.10.0.19041.57.nupkg.sha512"
+  ],
+  "logs": []
+}
