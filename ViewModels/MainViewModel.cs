@@ -67,6 +67,12 @@ namespace DynamicIslandDesktop.ViewModels
         /// <summary>Font teks di island compact: berskala hanya saat mode lirik.</summary>
         public double CompactFontSize => ShowLyrics ? 11 * LyricScale : 11;
 
+        private const int MaxCompactLines = 3;
+
+        /// <summary>Tinggi maksimal lirik compact (MaxCompactLines baris, berskala).</summary>
+        public double CompactLyricMaxHeight => 15 * MaxCompactLines * LyricScale;
+
+
         public MainViewModel(MediaSessionService media, LyricsService lyrics, AppSettings settings)
         {
             this.media = media;
@@ -81,6 +87,7 @@ namespace DynamicIslandDesktop.ViewModels
                 OnPropertyChanged(nameof(LyricNextFontSize));
                 OnPropertyChanged(nameof(LyricMaxHeight));
                 OnPropertyChanged(nameof(CompactFontSize));
+                OnPropertyChanged(nameof(CompactLyricMaxHeight));
             };
 
             media.MediaChanged += OnMediaChanged;

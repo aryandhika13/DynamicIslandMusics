@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using DynamicIslandDesktop.Helpers;
 
 namespace DynamicIslandDesktop
 {
@@ -17,12 +18,14 @@ namespace DynamicIslandDesktop
         // Ukuran dasar (ukuran font lirik = default). Saat mode lirik, ukuran ikut skala font.
         private const double CompactWidth = 180;
         private const double CompactHeight = 45;
+        private const double CompactTextOverhead = 93;   // album 30 + ikon 30 + margin 16 + 16 + 1
+        private const double CompactTextPadding = 24;    // ruang atas-bawah di sekitar teks
         private const double ExpandedWidth = 360;
         private const double ExpandedHeight = 140;
-
+      
         private readonly MainViewModel vm;
         private readonly AppSettings settings = new();
-        private SettingsWindow? settingsWindow;
+        private bool isSettingsOpen = false;
 
         private bool isExpanded = false;
         private bool isRotating = false;
@@ -34,7 +37,25 @@ namespace DynamicIslandDesktop
         private double Scale => vm.ShowLyrics ? vm.LyricScale : 1.0;
 
         private double CollapsedWidth => vm.ShowLyrics ? 80 + 240 * Scale : CompactWidth;   // skala 1 = 320
-        private double CollapsedHeight => CompactHeight + (Scale - 1) * 20;
+        private double CollapsedHeight
+        {
+            get
+            {
+                double baseHeight = CompactHeight + (Scale - 1) * 20;
+                if (!vm.ShowLyrics) return baseHeight;
+
+                // Tinggi lirik yang membungkus ke bawah; island tumbuh mengikuti jumlah barisnya
+                var typeface = new Typeface(CompactTitleText.FontFamily, CompactTitleText.FontStyle,
+                    CompactTitleText.FontWeight, CompactTitleText.FontStretch);
+
+                var (_, textHeight) = TextFit.Compute(
+                    vm.CompactText, typeface, VisualTreeHelper.GetDpi(this).PixelsPerDip,
+                    vm.CompactFontSize, TextFit.GetMinFontSize(CompactTitleText),
+                    CollapsedWidth - CompactTextOverhead, true, vm.CompactLyricMaxHeight);
+
+                return Math.Max(baseHeight, textHeight + CompactTextPadding);
+            }
+        }
         private double CurrentExpandedWidth => ExpandedWidth + (Scale - 1) * 200;
         private double CurrentExpandedHeight => ExpandedHeight + (Scale - 1) * 70;
 
@@ -203,6 +224,7 @@ namespace DynamicIslandDesktop
             double width = isExpanded ? CurrentExpandedWidth : CollapsedWidth;
             double height = isExpanded ? CurrentExpandedHeight : CollapsedHeight;
             AnimateSize(width, height);
+            RepositionMenu(width, height);
         }
 
         private void AnimateSize(double width, double height)
@@ -239,6 +261,7 @@ namespace DynamicIslandDesktop
             if (!isMenuVisible) return;
             isMenuVisible = false;
 
+            HideSettingsPanel();
             HidePill(SettingsPill, SettingsPillScale, SettingsPillTranslate, -1);
             HidePill(ExitPill, ExitPillScale, ExitPillTranslate, +1);
         }
@@ -288,17 +311,81 @@ namespace DynamicIslandDesktop
         private void SettingsPill_Click(object sender, MouseButtonEventArgs e)
         {
             if (isIntroPlaying || isExiting) return;
-            HideMenu();
 
-            if (settingsWindow != null)
+            if (isSettingsOpen) HideSettingsPanel();
+            else ShowSettingsPanel();
+        }
+
+        // Panel membentang dari tepi kiri pill Setting sampai tepi kanan island
+        private (double Width, double CenterX) SettingsPanelGeometry(double islandWidth)
+        {
+            double half = islandWidth / 2;
+            double left = -(half + 10 + SettingsPill.Width);   // tepi kiri pill Setting
+            double right = half;                               // tepi kanan island
+            return (right - left, (left + right) / 2);
+        }
+
+        private void LayoutSettingsPanel(double islandWidth, double islandHeight, TimeSpan duration)
+        {
+            var (width, centerX) = SettingsPanelGeometry(islandWidth);
+
+            // Margin kanan menggeser panel (yang rata tengah) ke posisi centerX; atas = di bawah island
+            var margin = new Thickness(0, 10 + islandHeight + 8, -2 * centerX, 0);
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+            SettingsPanel.BeginAnimation(FrameworkElement.WidthProperty,
+                new DoubleAnimation(width, duration) { EasingFunction = ease });
+            SettingsPanel.BeginAnimation(FrameworkElement.MarginProperty,
+                new ThicknessAnimation(margin, duration) { EasingFunction = ease });
+        }
+
+        private void ShowSettingsPanel()
+        {
+            if (isSettingsOpen) return;
+            isSettingsOpen = true;
+
+            LayoutSettingsPanel(IslandBorder.ActualWidth, IslandBorder.ActualHeight, TimeSpan.Zero);
+            SettingsPanel.Visibility = Visibility.Visible;
+
+            var ease = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.3 };
+            SettingsPanelScale.BeginAnimation(ScaleTransform.ScaleYProperty,
+                new DoubleAnimation(0.6, 1, TimeSpan.FromMilliseconds(300)) { EasingFunction = ease });
+            SettingsPanel.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(250)));
+        }
+
+        private void HideSettingsPanel()
+        {
+            if (!isSettingsOpen) return;
+            isSettingsOpen = false;
+
+            var dur = TimeSpan.FromMilliseconds(200);
+            SettingsPanelScale.BeginAnimation(ScaleTransform.ScaleYProperty,
+                new DoubleAnimation(0.6, dur) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } });
+
+            var fade = new DoubleAnimation(0, dur);
+            fade.Completed += (s, e) =>
             {
-                settingsWindow.Activate();
-                return;
-            }
+                if (!isSettingsOpen) SettingsPanel.Visibility = Visibility.Collapsed;
+            };
+            SettingsPanel.BeginAnimation(UIElement.OpacityProperty, fade);
+        }
 
-            settingsWindow = new SettingsWindow(settings) { Owner = this };
-            settingsWindow.Closed += (s, args) => settingsWindow = null;
-            settingsWindow.Show();
+        // Saat island berubah ukuran (mode lirik + slider), pill dan panel ikut menyesuaikan
+        private void RepositionMenu(double islandWidth, double islandHeight)
+        {
+            if (!isMenuVisible) return;
+
+            var dur = TimeSpan.FromMilliseconds(300);
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            double half = islandWidth / 2;
+
+            SettingsPillTranslate.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(-(half + 10 + SettingsPill.Width / 2), dur) { EasingFunction = ease });
+            ExitPillTranslate.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(half + 10 + ExitPill.Width / 2, dur) { EasingFunction = ease });
+
+            if (isSettingsOpen) LayoutSettingsPanel(islandWidth, islandHeight, dur);
         }
 
         private void ExitPill_Click(object sender, MouseButtonEventArgs e) => ExitWithAnimation();
