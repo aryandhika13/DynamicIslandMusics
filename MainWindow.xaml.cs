@@ -1,4 +1,5 @@
-﻿using DynamicIslandDesktop.Models;
+﻿using DynamicIslandDesktop.Helpers;
+using DynamicIslandDesktop.Models;
 using DynamicIslandDesktop.Services;
 using DynamicIslandDesktop.ViewModels;
 using System;
@@ -8,7 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using DynamicIslandDesktop.Helpers;
+using System.Windows.Threading;
 
 namespace DynamicIslandDesktop
 {
@@ -22,7 +23,9 @@ namespace DynamicIslandDesktop
         private const double CompactTextPadding = 24;    // ruang atas-bawah di sekitar teks
         private const double ExpandedWidth = 360;
         private const double ExpandedHeight = 140;
-      
+        private static readonly Color MenuIconGreen = Color.FromRgb(0x1D, 0xB9, 0x54);   // ikon panah
+        private static readonly Color MenuIconRed = Color.FromRgb(0xFF, 0x52, 0x52);     // ikon silang
+
         private readonly MainViewModel vm;
         private readonly AppSettings settings = new();
         private bool isSettingsOpen = false;
@@ -30,6 +33,7 @@ namespace DynamicIslandDesktop
         private bool isExpanded = false;
         private bool isRotating = false;
         private bool isMenuVisible = false;
+        private int menuIconVersion;
         private bool isExiting = false;
         private bool isIntroPlaying = true;
 
@@ -63,7 +67,7 @@ namespace DynamicIslandDesktop
         {
             InitializeComponent();
 
-            vm = new MainViewModel(new MediaSessionService(), new LyricsService(), settings);
+            vm = new MainViewModel(new MediaSessionService(), new LyricsService(), new DispatcherTicker(), settings);
             vm.PropertyChanged += Vm_PropertyChanged;
             settings.PropertyChanged += Settings_PropertyChanged;
             DataContext = vm;
@@ -92,6 +96,10 @@ namespace DynamicIslandDesktop
 
                 case nameof(MainViewModel.ShowLyrics):
                     ApplySize();
+                    break;
+
+                case nameof(MainViewModel.CompactText):
+                    if (vm.ShowLyrics) ApplySize();
                     break;
             }
         }
@@ -252,6 +260,7 @@ namespace DynamicIslandDesktop
             if (isMenuVisible) return;
             isMenuVisible = true;
 
+            AnimateMenuIcon(toClose: true);
             ShowPill(SettingsPill, SettingsPillScale, SettingsPillTranslate, -1);   // kiri
             ShowPill(ExitPill, ExitPillScale, ExitPillTranslate, +1);               // kanan
         }
@@ -261,9 +270,41 @@ namespace DynamicIslandDesktop
             if (!isMenuVisible) return;
             isMenuVisible = false;
 
+            AnimateMenuIcon(toClose: false);
             HideSettingsPanel();
             HidePill(SettingsPill, SettingsPillScale, SettingsPillTranslate, -1);
             HidePill(ExitPill, ExitPillScale, ExitPillTranslate, +1);
+        }
+
+        // Ikon berputar 360°; di tengah putaran bentuknya berganti, dan warnanya bergradasi hijau <-> merah
+        private void AnimateMenuIcon(bool toClose)
+        {
+            var target = (Geometry)FindResource(toClose ? "CloseCircleIcon" : "ChevronCircleIcon");
+            var current = CompactMenuIcon.Data;
+
+            var total = TimeSpan.FromMilliseconds(400);
+            var middle = TimeSpan.FromMilliseconds(200);
+            var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
+
+            // Putaran (mulai dari sudut saat ini kalau animasi sebelumnya belum selesai)
+            double start = MenuIconRotate.Angle % 360;
+            MenuIconRotate.BeginAnimation(RotateTransform.AngleProperty,
+                new DoubleAnimation(start, start + 360, total) { EasingFunction = ease });
+
+            // Transisi warna: tanpa From, jadi mulai dari warna saat ini
+            MenuIconBrush.BeginAnimation(SolidColorBrush.ColorProperty,
+                new ColorAnimation
+                {
+                    To = toClose ? MenuIconRed : MenuIconGreen,
+                    Duration = total,
+                    EasingFunction = ease
+                });
+
+            // Ganti bentuk di tengah putaran
+            var swap = new ObjectAnimationUsingKeyFrames { Duration = total };
+            swap.KeyFrames.Add(new DiscreteObjectKeyFrame(current, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            swap.KeyFrames.Add(new DiscreteObjectKeyFrame(target, KeyTime.FromTimeSpan(middle)));
+            CompactMenuIcon.BeginAnimation(System.Windows.Shapes.Path.DataProperty, swap);
         }
 
         // side: -1 = kiri island, +1 = kanan island

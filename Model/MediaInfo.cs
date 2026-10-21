@@ -1,7 +1,5 @@
-﻿using System.Windows.Media;
-
-namespace DynamicIslandDesktop.Models
+﻿namespace DynamicIslandDesktop.Models
 {
-    /// <summary>Info lagu yang sedang diputar. Thumbnail sudah di-Freeze sehingga aman lintas thread.</summary>
-    public record MediaInfo(string Title, string Artist, ImageSource? Thumbnail);
+    /// <summary>Info lagu yang sedang diputar. Thumbnail berupa data gambar mentah (byte[]), bebas dari tipe WPF.</summary>
+    public record MediaInfo(string Title, string Artist, byte[]? Thumbnail);
 }

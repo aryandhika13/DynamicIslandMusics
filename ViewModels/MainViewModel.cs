@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using System.Windows.Media;
-using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DynamicIslandDesktop.Models;
@@ -10,12 +8,14 @@ using DynamicIslandDesktop.Services;
 
 namespace DynamicIslandDesktop.ViewModels
 {
-    /// <summary>State yang ditampilkan island + command-nya. Tidak mereferensikan kontrol UI.</summary>
+    /// <summary>State yang ditampilkan island + command-nya. Bebas dari tipe WPF dan kontrol UI.</summary>
     public partial class MainViewModel : ObservableObject
     {
+        private const int MaxCompactLines = 3;   // maksimal baris lirik di compact
+
         private readonly MediaSessionService media;
         private readonly LyricsService lyrics;
-        private readonly DispatcherTimer lyricTimer;
+        private readonly ITicker lyricTicker;
 
         private List<LyricLine> lines = new();
         private string lyricsKey = "";
@@ -30,7 +30,7 @@ namespace DynamicIslandDesktop.ViewModels
         private string artist = "-";
 
         [ObservableProperty]
-        private ImageSource? albumArt;
+        private byte[]? albumArt;
 
         [ObservableProperty, NotifyPropertyChangedFor(nameof(PlayPauseGlyph))]
         private bool isPlaying;
@@ -67,16 +67,14 @@ namespace DynamicIslandDesktop.ViewModels
         /// <summary>Font teks di island compact: berskala hanya saat mode lirik.</summary>
         public double CompactFontSize => ShowLyrics ? 11 * LyricScale : 11;
 
-        private const int MaxCompactLines = 3;
-
         /// <summary>Tinggi maksimal lirik compact (MaxCompactLines baris, berskala).</summary>
         public double CompactLyricMaxHeight => 15 * MaxCompactLines * LyricScale;
 
-
-        public MainViewModel(MediaSessionService media, LyricsService lyrics, AppSettings settings)
+        public MainViewModel(MediaSessionService media, LyricsService lyrics, ITicker lyricTicker, AppSettings settings)
         {
             this.media = media;
             this.lyrics = lyrics;
+            this.lyricTicker = lyricTicker;   // pakai "this." karena nama parameter sama dengan field
             Settings = settings;
 
             settings.PropertyChanged += (_, e) =>
@@ -93,13 +91,12 @@ namespace DynamicIslandDesktop.ViewModels
             media.MediaChanged += OnMediaChanged;
             media.PlaybackChanged += playing => IsPlaying = playing;
 
-            lyricTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-            lyricTimer.Tick += LyricTimer_Tick;
+            lyricTicker.Tick += OnLyricTick;
         }
 
         public Task InitializeAsync() => media.InitializeAsync();
 
-        public void StopTimers() => lyricTimer.Stop();
+        public void StopTimers() => lyricTicker.Stop();
 
         // ================= COMMANDS =================
         [RelayCommand] private Task PlayPauseAsync() => media.TogglePlayPauseAsync();
@@ -115,11 +112,11 @@ namespace DynamicIslandDesktop.ViewModels
             {
                 lastLyricIndex = -2;   // paksa refresh teks lirik
                 await LoadLyricsAsync();
-                lyricTimer.Start();
+                lyricTicker.Start();
             }
             else
             {
-                lyricTimer.Stop();
+                lyricTicker.Stop();
             }
         }
 
@@ -186,7 +183,7 @@ namespace DynamicIslandDesktop.ViewModels
                 SetLyric("Lirik tidak ditemukan", "");
         }
 
-        private void LyricTimer_Tick(object? sender, EventArgs e)
+        private void OnLyricTick()
         {
             if (!ShowLyrics || lines.Count == 0) return;
 

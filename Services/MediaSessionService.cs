@@ -2,8 +2,6 @@
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using DynamicIslandDesktop.Models;
 using Windows.Media.Control;
 using Windows.Storage.Streams;
@@ -157,7 +155,8 @@ namespace DynamicIslandDesktop.Services
             catch { }
         }
 
-        private static async Task<ImageSource?> LoadThumbnailAsync(IRandomAccessStreamReference? thumbnail)
+        // Mengembalikan data gambar mentah; pengubahan ke gambar WPF dilakukan di View (converter)
+        private static async Task<byte[]?> LoadThumbnailAsync(IRandomAccessStreamReference? thumbnail)
         {
             if (thumbnail == null) return null;
 
@@ -165,14 +164,9 @@ namespace DynamicIslandDesktop.Services
             {
                 using var stream = await thumbnail.OpenReadAsync();
                 using var netStream = stream.AsStream();
-
-                var bitmap = new BitmapImage();
-                bitmap.BeginInit();
-                bitmap.StreamSource = netStream;
-                bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                bitmap.EndInit();
-                bitmap.Freeze();
-                return bitmap;
+                using var ms = new MemoryStream();
+                await netStream.CopyToAsync(ms);
+                return ms.ToArray();
             }
             catch { return null; }
         }
