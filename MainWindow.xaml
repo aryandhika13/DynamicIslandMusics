@@ -189,8 +189,7 @@
                         <!-- Judul & Artis -->
                         <StackPanel x:Name="InfoPanel" Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0"
                                     Style="{StaticResource InfoPanelStyle}">
-                            <TextBlock Text="{Binding Title}" Foreground="White" FontSize="14" FontWeight="Bold"
-                            helpers:TextFit.MaxFontSize="{Binding InfoTitleFontSize}"
+                            <TextBlock Text="{Binding Title}" Foreground="White" FontSize="14" FontWeight="Bold" helpers:TextFit.MaxFontSize="{Binding InfoTitleFontSize}"
                                 TextTrimming="CharacterEllipsis"/>
                             <TextBlock Text="{Binding Artist}" Foreground="#AAAAAA" FontSize="12" Margin="0,2,0,0"
                                 helpers:TextFit.MaxFontSize="{Binding InfoArtistFontSize}"

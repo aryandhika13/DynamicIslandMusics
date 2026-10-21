@@ -1,61 +1,61 @@
 # Dynamic Island Desktop
 
-Dynamic Island ala iPhone untuk desktop Windows. Aplikasi WPF ringan ini menampilkan lagu yang sedang kamu dengarkan di bagian tengah atas layar, lengkap dengan kontrol pemutar dan lirik yang berjalan sesuai lagu.
+An iPhone-style Dynamic Island for the Windows desktop. This lightweight WPF application displays the currently playing song at the top center of your screen, complete with media controls and synchronized scrolling lyrics.
 
-<!-- Tambahkan screenshot atau GIF demo di sini, misalnya: ![Demo](docs/demo.gif) -->
+<!-- Add a screenshot or demo GIF here, e.g., ![Demo](docs/demo.gif) -->
 
-## Fitur
+## Features
 
-- **Mengikuti musik apa pun.** Menampilkan judul, artis, dan sampul album dari pemutar media yang sedang aktif, seperti Spotify atau YouTube di browser.
-- **Kontrol pemutar.** Putar, jeda, lanjut ke lagu berikutnya, atau kembali ke lagu sebelumnya langsung dari island.
-- **Dua tampilan.** Tampilan ringkas yang tidak mengganggu, dan tampilan lengkap yang terbuka saat kamu mengarahkan mouse ke island.
-- **Lirik waktu nyata.** Lirik tampil baris demi baris, mengikuti posisi lagu.
-- **Ukuran font dapat diatur.** Sesuaikan ukuran lirik lewat menu Setting, dan island ikut menyesuaikan ukurannya.
-- **Animasi halus.** Transisi yang mulus saat island muncul, berubah ukuran, dan menutup.
-- **Selalu terlihat.** Island tetap berada di atas jendela lain, tanpa menghalangi pekerjaanmu.
+- **Follows any music:** Displays the title, artist, and album art from any active media player, such as Spotify or a browser-based YouTube player.
+- **Media controls:** Play, pause, skip to the next track, or go to the previous track directly from the island.
+- **Dual view:** A compact, non-intrusive view and an expanded view that appears when you hover your mouse over the island.
+- **Real-time lyrics:** Lyrics appear line by line, perfectly synced with the song's playback position.
+- **Adjustable font size:** Customize the lyrics font size through the settings menu, and the island will automatically adjust its size.
+- **Smooth animations:** Seamless transitions when the island appears, resizes, and closes.
+- **Always on top:** The island stays above other windows without disrupting your workflow.
 
-## Persyaratan
+## Requirements
 
-- Windows 10 versi 1809 (build 17763) atau lebih baru
-- [.NET SDK](https://dotnet.microsoft.com/download) 6 atau lebih baru
-- Koneksi internet (hanya untuk mengambil lirik)
+- Windows 10 version 1809 (build 17763) or newer
+- [.NET SDK](https://dotnet.microsoft.com/download) 6 or newer
+- Internet connection (required for fetching lyrics only)
 
-## Memulai
+## Getting Started
 
-```
-git clone <url-repositori>
+```bash
+git clone https://github.com/aryandhika13/DynamicIslandMusics.git
 cd DynamicIslandDesktop
 dotnet run
 ```
 
-Kamu juga bisa membuka proyek di Visual Studio, lalu menjalankannya dengan **F5**.
+You can also open the project in Visual Studio and run it by pressing **F5**.
 
-## Cara pakai
+## Usage
 
-1. Putar musik di aplikasi apa pun yang mendukung kontrol media Windows. Judul dan sampul album langsung tampil di island.
-2. Arahkan mouse ke bagian tengah island untuk membuka tampilan lengkap, lalu gunakan tombol kontrol yang tersedia.
-3. Klik tombol lirik untuk menampilkan lirik, dan klik lagi untuk kembali ke judul lagu.
-4. Klik ikon di sisi kanan island untuk membuka menu:
-   - **Setting** untuk mengatur ukuran font lirik.
-   - **Keluar** untuk menutup aplikasi.
+1. Play music in any application that supports Windows media controls. The song title and album art will instantly appear on the island.
+2. Hover your mouse over the center of the island to open the expanded view, then use the available control buttons.
+3. Click the lyrics button to display the lyrics, and click it again to return to the song title.
+4. Click the icon on the right side of the island to open the menu:
+   - **Settings** to adjust the lyrics font size.
+   - **Exit** to close the application.
 
-## Arsitektur
+## Architecture
 
-Proyek ini memakai pola **MVVM**. Kodenya dibagi menjadi beberapa layer, dan ketergantungan hanya mengarah ke bawah:
+This project follows the **MVVM** pattern. The code is divided into layers with unidirectional dependency flow (pointing downwards):
 
 ```
 View  ──►  ViewModel  ──►  Service  ──►  Model
 ```
 
-| Layer | Fungsi |
+| Layer | Function |
 |---|---|
-| **View** (`MainWindow`) | Tampilan, animasi, dan interaksi pengguna. Tidak berisi logika bisnis. |
-| **ViewModel** | Menyimpan state yang ditampilkan (judul, lirik, status putar) dan menyediakan command untuk aksi pengguna. |
-| **Service** | Logika di luar UI: membaca sesi media Windows dan mengambil lirik dari internet. |
-| **Model** | Data sederhana, seperti baris lirik, info lagu, dan pengaturan. |
-| **Helpers** | Utilitas khusus WPF, seperti penyesuaian ukuran teks dan konversi gambar. |
+| **View** (`MainWindow`) | UI, animations, and user interaction. Contains no business logic. |
+| **ViewModel** | Stores the displayed state (title, lyrics, playback status) and provides commands for user actions. |
+| **Service** | Logic outside the UI: reads Windows media sessions and fetches lyrics from the internet. |
+| **Model** | Simple data structures such as lyric lines, media info, and app settings. |
+| **Helpers** | WPF-specific utilities, such as text-fit adjustments and image converters. |
 
-Dengan pemisahan ini, logika bisa diubah atau diuji tanpa menyentuh tampilan. Model, Service, dan ViewModel tidak bergantung pada tipe WPF.
+With this separation, the logic can be modified or tested without touching the UI. Model, Service, and ViewModel do not depend on WPF types.
 
 ```
 DynamicIslandDesktop/
@@ -63,23 +63,23 @@ DynamicIslandDesktop/
 ├── Services/        MediaSessionService, LyricsService, ITicker
 ├── ViewModels/      MainViewModel
 ├── Helpers/         TextFit, DispatcherTicker, BytesToImageConverter
-├── MainWindow.xaml      Tampilan island
-└── MainWindow.xaml.cs   Animasi dan event UI
+├── MainWindow.xaml      Island UI
+└── MainWindow.xaml.cs   UI animations and events
 ```
 
-## Teknologi
+## Technologies
 
-- [WPF](https://learn.microsoft.com/dotnet/desktop/wpf/) dan .NET
-- [CommunityToolkit.Mvvm](https://learn.microsoft.com/dotnet/communitytoolkit/mvvm/) untuk MVVM
-- Windows Media Transport Controls (`Windows.Media.Control`) untuk membaca dan mengontrol media
-- [LRCLIB](https://lrclib.net) untuk lirik tersinkron
+- [WPF](https://learn.microsoft.com/dotnet/desktop/wpf/) & .NET
+- [CommunityToolkit.Mvvm](https://learn.microsoft.com/dotnet/communitytoolkit/mvvm/) for MVVM
+- Windows Media Transport Controls (`Windows.Media.Control`) for reading and controlling media
+- [LRCLIB](https://lrclib.net) for synchronized lyrics
 
-## Keterbatasan
+## Limitations
 
-- Hanya berjalan di Windows 10 dan 11.
-- Lirik bergantung pada ketersediaan data di LRCLIB, jadi tidak semua lagu memilikinya.
-- Pengaturan belum tersimpan dan kembali ke nilai awal setiap aplikasi dibuka.
+- Only runs on Windows 10 and 11.
+- Lyrics depend on availability in LRCLIB, so not all songs may have them.
+- Settings are not persisted and reset to default values every time the application starts.
 
-## Ucapan terima kasih
+## Acknowledgments
 
-Lirik disediakan oleh [LRCLIB](https://lrclib.net).
+Lyrics provided by [LRCLIB](https://lrclib.net).

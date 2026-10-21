@@ -200,9 +200,11 @@ namespace DynamicIslandDesktop
         {
             if (isIntroPlaying) return;
 
+            // Saat menu (Setting/Keluar) terbuka, hover tidak boleh memperbesar island
+            if (expand && isMenuVisible) return;
+
             if (isExpanded == expand) return;
             isExpanded = expand;
-            if (expand) HideMenu();
 
             var widthAnimation = new DoubleAnimation
             {
