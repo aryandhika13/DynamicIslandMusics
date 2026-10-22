@@ -237,6 +237,89 @@ namespace DynamicIslandDesktop
             RepositionMenu(width, height);
         }
 
+        // Dipanggil saat pengguna mencoba membuka aplikasi untuk kedua kalinya
+        public void OnSecondInstanceLaunched()
+        {
+            if (isIntroPlaying || isExiting) return;
+
+            // Saat island sedang expanded (mouse di atasnya), cukup mantul tanpa melebar
+            PlayBounceAnimation(widen: !isExpanded);
+        }
+
+        // Melebar -> mantul ke bawah 3 kali (makin kecil) -> kembali ke ukuran normal.
+        // Jika menu terbuka, pill Setting/Keluar (dan panel pengaturan) ikut melebar dan mantul.
+        private void PlayBounceAnimation(bool widen)
+        {
+            const double WidenBy = 60;       // tambahan lebar saat melebar (px)
+            const double BounceStart = 300;  // mantul dimulai setelah melebar (ms)
+            const double BounceHalf = 120;   // durasi turun, dan juga naik, per mantulan (ms)
+            double[] heights = { 12, 8, 4 }; // jarak turun tiap mantulan (px); jumlah isi = jumlah mantulan
+
+            static KeyTime Ms(double ms) => KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(ms));
+
+            // 1. Lebar: island, pill, dan panel memakai keyframe yang sama supaya selalu sejajar
+            if (widen)
+            {
+                double from = IslandBorder.ActualWidth;
+                double normal = CollapsedWidth;
+                double wide = normal + WidenBy;
+
+                // map: mengubah lebar island menjadi nilai milik elemen yang dianimasikan
+                DoubleAnimationUsingKeyFrames WidthKeys(Func<double, double> map)
+                {
+                    var a = new DoubleAnimationUsingKeyFrames();
+                    a.KeyFrames.Add(new LinearDoubleKeyFrame(map(from), Ms(0)));
+                    a.KeyFrames.Add(new EasingDoubleKeyFrame(map(wide), Ms(300),
+                        new CubicEase { EasingMode = EasingMode.EaseOut }));
+                    a.KeyFrames.Add(new LinearDoubleKeyFrame(map(wide), Ms(1200)));
+                    a.KeyFrames.Add(new EasingDoubleKeyFrame(map(normal), Ms(1600),
+                        new CubicEase { EasingMode = EasingMode.EaseInOut }));
+                    return a;
+                }
+
+                IslandBorder.BeginAnimation(FrameworkElement.WidthProperty, WidthKeys(w => w));
+
+                if (isMenuVisible)
+                {
+                    // Pill menjaga jarak 10 px dari tepi island, jadi posisinya mengikuti lebar island
+                    SettingsPillTranslate.BeginAnimation(TranslateTransform.XProperty,
+                        WidthKeys(w => -(w / 2 + 10 + SettingsPill.Width / 2)));
+                    ExitPillTranslate.BeginAnimation(TranslateTransform.XProperty,
+                        WidthKeys(w => w / 2 + 10 + ExitPill.Width / 2));
+
+                    if (isSettingsOpen)
+                        SettingsPanel.BeginAnimation(FrameworkElement.WidthProperty,
+                            WidthKeys(w => SettingsPanelGeometry(w).Width));
+                }
+            }
+
+            // 2. Mantul: turun (melambat di titik bawah), lalu naik kembali (makin cepat), tiga kali
+            var bounce = new DoubleAnimationUsingKeyFrames();
+            double t = widen ? BounceStart : 0;
+            if (t > 0) bounce.KeyFrames.Add(new LinearDoubleKeyFrame(0, Ms(t)));   // diam dulu sambil melebar
+
+            foreach (double h in heights)
+            {
+                t += BounceHalf;
+                bounce.KeyFrames.Add(new EasingDoubleKeyFrame(h, Ms(t),
+                    new CubicEase { EasingMode = EasingMode.EaseOut }));
+                t += BounceHalf;
+                bounce.KeyFrames.Add(new EasingDoubleKeyFrame(0, Ms(t),
+                    new CubicEase { EasingMode = EasingMode.EaseIn }));
+            }
+
+            IslandShift.BeginAnimation(TranslateTransform.YProperty, bounce);
+
+            if (isMenuVisible)
+            {
+                // Pill dan panel ikut mantul sebagai satu kelompok dengan island
+                SettingsPillTranslate.BeginAnimation(TranslateTransform.YProperty, bounce);
+                ExitPillTranslate.BeginAnimation(TranslateTransform.YProperty, bounce);
+                if (isSettingsOpen)
+                    SettingsPanelShift.BeginAnimation(TranslateTransform.YProperty, bounce);
+            }
+        }
+
         private void AnimateSize(double width, double height)
         {
             var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
