@@ -1,144 +1,126 @@
-﻿using System;
-using System.IO;
-using System.Threading.Tasks;
+﻿using DynamicIslandDesktop.Helpers;
+using DynamicIslandDesktop.Models;
+using DynamicIslandDesktop.Services;
+using DynamicIslandDesktop.ViewModels;
+using System;
+using System.ComponentModel;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using System.Windows.Media.Imaging;
-using Windows.Media.Control;
-using Windows.Storage.Streams;
-using System.Collections.Generic;
-using System.Globalization;
-using System.Linq;
-using System.Net.Http;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Windows.Threading;
 
 namespace DynamicIslandDesktop
 {
+    /// <summary>View: hanya animasi, posisi window, dan event murni UI. Logika ada di ViewModel/Service.</summary>
     public partial class MainWindow : Window
     {
+        // Ukuran dasar (ukuran font lirik = default). Saat mode lirik, ukuran ikut skala font.
+        private const double CompactWidth = 180;
+        private const double CompactHeight = 45;
+        private const double CompactTextOverhead = 93;   // album 30 + ikon 30 + margin 16 + 16 + 1
+        private const double CompactTextPadding = 24;    // ruang atas-bawah di sekitar teks
+        private const double ExpandedWidth = 360;
+        private const double ExpandedHeight = 140;
+        private static readonly Color MenuIconGreen = Color.FromRgb(0x1D, 0xB9, 0x54);   // ikon panah
+        private static readonly Color MenuIconRed = Color.FromRgb(0xFF, 0x52, 0x52);     // ikon silang
+
+        private readonly MainViewModel vm;
+        private readonly AppSettings settings = new();
+        private bool isSettingsOpen = false;
+
         private bool isExpanded = false;
         private bool isRotating = false;
-        private bool isPillVisible = false;
+        private bool isMenuVisible = false;
+        private int menuIconVersion;
         private bool isExiting = false;
-        private GlobalSystemMediaTransportControlsSessionManager? sessionManager;
-        private GlobalSystemMediaTransportControlsSession? currentSession;
-
-        private static readonly HttpClient http = new HttpClient();
-        private readonly DispatcherTimer lyricTimer;
-        private bool showLyrics = false;
-        private List<(TimeSpan Time, string Text)> lyricLines = new();
-        private string lyricsKey = "";
-        private int lastLyricIndex = -2;
-        private string currentTitle = "";
-        private string currentArtist = "";
-
-        private const double CompactWidth = 180;        // compact biasa
-        private const double CompactLyricWidth = 320;   // compact saat mode lirik
-        private const double ExpandedWidth = 360;
         private bool isIntroPlaying = true;
 
-        private double CollapsedWidth => showLyrics ? CompactLyricWidth : CompactWidth;
+        // Skala hanya berlaku saat mode lirik aktif (mode judul/artis tidak berubah)
+        private double Scale => vm.ShowLyrics ? vm.LyricScale : 1.0;
 
-        static MainWindow()
+        private double CollapsedWidth => vm.ShowLyrics ? 80 + 240 * Scale : CompactWidth;   // skala 1 = 320
+        private double CollapsedHeight
         {
-            // LRCLIB meminta User-Agent
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("DynamicIslandDesktop/1.0");
+            get
+            {
+                double baseHeight = CompactHeight + (Scale - 1) * 20;
+                if (!vm.ShowLyrics) return baseHeight;
+
+                // Tinggi lirik yang membungkus ke bawah; island tumbuh mengikuti jumlah barisnya
+                var typeface = new Typeface(CompactTitleText.FontFamily, CompactTitleText.FontStyle,
+                    CompactTitleText.FontWeight, CompactTitleText.FontStretch);
+
+                var (_, textHeight) = TextFit.Compute(
+                    vm.CompactText, typeface, VisualTreeHelper.GetDpi(this).PixelsPerDip,
+                    vm.CompactFontSize, TextFit.GetMinFontSize(CompactTitleText),
+                    CollapsedWidth - CompactTextOverhead, true, vm.CompactLyricMaxHeight);
+
+                return Math.Max(baseHeight, textHeight + CompactTextPadding);
+            }
         }
+        private double CurrentExpandedWidth => ExpandedWidth + (Scale - 1) * 200;
+        private double CurrentExpandedHeight => ExpandedHeight + (Scale - 1) * 70;
 
         public MainWindow()
         {
             InitializeComponent();
 
-            lyricTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-            lyricTimer.Tick += LyricTimer_Tick;
+            vm = new MainViewModel(new MediaSessionService(), new LyricsService(), new DispatcherTicker(), settings);
+            vm.PropertyChanged += Vm_PropertyChanged;
+            settings.PropertyChanged += Settings_PropertyChanged;
+            DataContext = vm;
         }
 
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
             // Posisikan window di tengah atas layar
-            this.Left = (SystemParameters.PrimaryScreenWidth - this.Width) / 2;
-            this.Top = 0;
+            Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
+            Top = 0;
 
             PlayIntroAnimation();
 
-            // Inisialisasi Media Transport Controller API
-            await InitMediaSessionAsync();
+            await vm.InitializeAsync();
         }
 
-        private async Task InitMediaSessionAsync()
+        // Bereaksi terhadap perubahan state ViewModel yang punya efek visual non-binding
+        private void Vm_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
-            sessionManager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
-            if (sessionManager != null)
+            switch (e.PropertyName)
             {
-                // Event ketika aplikasi pemutar media berubah (misal dari Spotify pindah ke Chrome/YouTube)
-                sessionManager.CurrentSessionChanged += SessionManager_CurrentSessionChanged;
+                case nameof(MainViewModel.IsPlaying):
+                    if (vm.IsPlaying) StartRotation();
+                    else StopRotation();
+                    break;
 
-                // Update session pertama kali
-                UpdateCurrentSession(sessionManager.GetCurrentSession());
+                case nameof(MainViewModel.ShowLyrics):
+                    ApplySize();
+                    break;
+
+                case nameof(MainViewModel.CompactText):
+                    if (vm.ShowLyrics) ApplySize();
+                    break;
             }
         }
 
-        private void SessionManager_CurrentSessionChanged(GlobalSystemMediaTransportControlsSessionManager sender, CurrentSessionChangedEventArgs args)
+        private void Settings_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
-            Dispatcher.Invoke(() =>
+            switch (e.PropertyName)
             {
-                UpdateCurrentSession(sender.GetCurrentSession());
-            });
-        }
+                case nameof(AppSettings.RotateAlbumArt):
+                    if (settings.RotateAlbumArt && vm.IsPlaying) StartRotation();
+                    else StopRotation();
+                    break;
 
-        private void UpdateCurrentSession(GlobalSystemMediaTransportControlsSession? session)
-        {
-            if (currentSession != null)
-            {
-                currentSession.MediaPropertiesChanged -= CurrentSession_MediaPropertiesChanged;
-                currentSession.PlaybackInfoChanged -= CurrentSession_PlaybackInfoChanged;
+                case nameof(AppSettings.LyricFontSize):
+                    ApplySize();
+                    break;
+
+                case nameof(AppSettings.AlwaysOnTop):
+                    Topmost = settings.AlwaysOnTop;
+                    break;
             }
-
-            currentSession = session;
-
-            if (currentSession != null)
-            {
-                currentSession.MediaPropertiesChanged += CurrentSession_MediaPropertiesChanged;
-                currentSession.PlaybackInfoChanged += CurrentSession_PlaybackInfoChanged;
-
-                _ = UpdateMediaInfoAsync();
-                UpdatePlaybackInfo();
-            }
-            else
-            {
-                SetLyric("Tidak ada media", "");
-                TitleText.Text = "Media tidak aktif";
-                ArtistText.Text = "-";
-                CompactAlbumArt.Source = null;
-                ExpandedAlbumArt.Source = null;
-                currentTitle = "";
-                currentArtist = "";
-                lyricsKey = "";
-                lyricLines.Clear();
-                LyricCurrent.Text = "Tidak ada media";
-                LyricNext.Text = "";
-                StopRotation();
-            }
-        }
-
-        private async void CurrentSession_MediaPropertiesChanged(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args)
-        {
-            await Dispatcher.InvokeAsync(async () =>
-            {
-                await UpdateMediaInfoAsync();
-            });
-        }
-
-        private void CurrentSession_PlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, PlaybackInfoChangedEventArgs args)
-        {
-            Dispatcher.Invoke(() =>
-            {
-                UpdatePlaybackInfo();
-            });
         }
 
         // ================= ANIMASI PEMBUKA =================
@@ -169,7 +151,7 @@ namespace DynamicIslandDesktop
             widthAnim.Completed += (s, e) => isIntroPlaying = false;
             IslandBorder.BeginAnimation(FrameworkElement.WidthProperty, widthAnim);
 
-            // 3. Judul dan ikon musik muncul perlahan
+            // 3. Judul dan ikon menu muncul perlahan
             var fadeAnim = new DoubleAnimation
             {
                 From = 0,
@@ -178,72 +160,13 @@ namespace DynamicIslandDesktop
                 Duration = TimeSpan.FromMilliseconds(400)
             };
             CompactTitleText.BeginAnimation(UIElement.OpacityProperty, fadeAnim);
-            CompactMusicIcon.BeginAnimation(UIElement.OpacityProperty, fadeAnim);
-        }
-
-        private async Task UpdateMediaInfoAsync()
-        {
-            if (currentSession == null) return;
-
-            try
-            {
-                var props = await currentSession.TryGetMediaPropertiesAsync();
-                if (props != null)
-                {
-                    TitleText.Text = string.IsNullOrEmpty(props.Title) ? "Unknown Track" : props.Title;
-                    ArtistText.Text = string.IsNullOrEmpty(props.Artist) ? "Unknown Artist" : props.Artist;
-                    if (!showLyrics)
-                        CompactTitleText.Text = string.IsNullOrEmpty(props.Title) ? "Unknown Track" : props.Title;
-
-                    currentTitle = props.Title ?? "";
-                    currentArtist = props.Artist ?? "";
-
-                    // Ambil Album Art / Thumbnail YouTube/Spotify
-                    if (props.Thumbnail != null)
-                    {
-                        IRandomAccessStreamWithContentType stream = await props.Thumbnail.OpenReadAsync();
-                        BitmapImage bitmap = new BitmapImage();
-                        bitmap.BeginInit();
-                        bitmap.StreamSource = stream.AsStream();
-                        bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                        bitmap.EndInit();
-
-                        CompactAlbumArt.Source = bitmap;
-                        ExpandedAlbumArt.Source = bitmap;
-                    }
-                    else
-                    {
-                        CompactAlbumArt.Source = null;
-                        ExpandedAlbumArt.Source = null;
-                    }
-
-                    if (showLyrics) await LoadLyricsAsync();
-                }
-            }
-            catch { }
-        }
-
-        private void UpdatePlaybackInfo()
-        {
-            if (currentSession == null) return;
-
-            var playback = currentSession.GetPlaybackInfo();
-            if (playback != null)
-            {
-                bool isPlaying = playback.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
-
-                // E769 = Pause, E768 = Play (Segoe MDL2 Assets)
-                BtnPlayPause.Content = isPlaying ? "\uE769" : "\uE768";
-
-                if (isPlaying) StartRotation();
-                else StopRotation();
-            }
+            CompactMenuIcon.BeginAnimation(UIElement.OpacityProperty, fadeAnim);
         }
 
         // ================= ROTASI ALBUM ART =================
         private void StartRotation()
         {
-            if (isRotating) return;
+            if (isRotating || !settings.RotateAlbumArt) return;
             isRotating = true;
 
             double start = AlbumRotate.Angle % 360;
@@ -269,33 +192,29 @@ namespace DynamicIslandDesktop
         }
 
         // ================= ANIMASI EXPAND / COLLAPSE (HOVER) =================
-        private void HoverZone_MouseEnter(object sender, MouseEventArgs e)
-        {
-            SetExpanded(true);
-        }
+        private void HoverZone_MouseEnter(object sender, MouseEventArgs e) => SetExpanded(true);
 
-        private void IslandBorder_MouseLeave(object sender, MouseEventArgs e)
-        {
-            SetExpanded(false);
-        }
+        private void IslandBorder_MouseLeave(object sender, MouseEventArgs e) => SetExpanded(false);
 
         private void SetExpanded(bool expand)
         {
             if (isIntroPlaying) return;
 
+            // Saat menu (Setting/Keluar) terbuka, hover tidak boleh memperbesar island
+            if (expand && isMenuVisible) return;
+
             if (isExpanded == expand) return;
             isExpanded = expand;
-            if (expand) HideExitPill();
 
             var widthAnimation = new DoubleAnimation
             {
-                To = expand ? ExpandedWidth : CollapsedWidth,
+                To = expand ? CurrentExpandedWidth : CollapsedWidth,
                 Duration = TimeSpan.FromMilliseconds(300),
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
             };
             var heightAnimation = new DoubleAnimation
             {
-                To = expand ? 140 : 45,
+                To = expand ? CurrentExpandedHeight : CollapsedHeight,
                 Duration = TimeSpan.FromMilliseconds(300),
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
             };
@@ -307,263 +226,295 @@ namespace DynamicIslandDesktop
             IslandBorder.BeginAnimation(FrameworkElement.HeightProperty, heightAnimation);
         }
 
-        // Mengubah teks lirik di panel expanded dan di compact sekaligus
-        private void SetLyric(string current, string next)
-        {
-            LyricCurrent.Text = current;
-            LyricNext.Text = next;
-
-            if (showLyrics)
-                CompactTitleText.Text = current;
-        }
-
-        private void AnimateWidth(double width)
-        {
-            var anim = new DoubleAnimation
-            {
-                To = width,
-                Duration = TimeSpan.FromMilliseconds(300),
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-            };
-            IslandBorder.BeginAnimation(FrameworkElement.WidthProperty, anim);
-        }
-
-        // ================= MEDIA CONTROLS CLICK EVENTS =================
-        private async void BtnPlayPause_Click(object sender, RoutedEventArgs e)
-        {
-            if (currentSession != null)
-            {
-                var info = currentSession.GetPlaybackInfo();
-                if (info.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
-                    await currentSession.TryPauseAsync();
-                else
-                    await currentSession.TryPlayAsync();
-            }
-        }
-
-        private async void BtnPrev_Click(object sender, RoutedEventArgs e)
-        {
-            if (currentSession != null) await currentSession.TrySkipPreviousAsync();
-        }
-
-        private async void BtnNext_Click(object sender, RoutedEventArgs e)
-        {
-            if (currentSession != null) await currentSession.TrySkipNextAsync();
-        }
-
-        // ================= LIRIK =================
-        private async void BtnLyrics_Click(object sender, RoutedEventArgs e)
-        {
-            showLyrics = !showLyrics;
-
-            InfoPanel.Visibility = showLyrics ? Visibility.Collapsed : Visibility.Visible;
-            LyricsPanel.Visibility = showLyrics ? Visibility.Visible : Visibility.Collapsed;
-            BtnLyrics.Opacity = showLyrics ? 1.0 : 0.5;
-
-            // Jika island sedang compact, langsung sesuaikan lebarnya
-            if (!isExpanded) AnimateWidth(CollapsedWidth);
-
-            if (showLyrics)
-            {
-                lastLyricIndex = -2;                         // paksa refresh teks lirik
-                CompactTitleText.Text = LyricCurrent.Text;   // sinkronkan compact
-                await LoadLyricsAsync();
-                lyricTimer.Start();
-            }
-            else
-            {
-                lyricTimer.Stop();
-                CompactTitleText.Text = string.IsNullOrEmpty(currentTitle) ? "Tidak ada media" : currentTitle;
-            }
-        }
-
-        private async Task LoadLyricsAsync()
-        {
-            string key = $"{currentArtist}|{currentTitle}";
-            if (key == lyricsKey) return;   // lagu sama, tidak perlu load ulang
-            lyricsKey = key;
-
-            lyricLines.Clear();
-            lastLyricIndex = -2;
-
-            if (string.IsNullOrWhiteSpace(currentTitle))
-            {
-                SetLyric("Tidak ada media", "");
-                LyricNext.Text = "";
-                return;
-            }
-
-            SetLyric("Memuat lirik...", "");
-            LyricNext.Text = "";
-
-            string? synced = null;
-
-            try
-            {
-                // Durasi lagu membantu LRCLIB mencocokkan versi yang tepat
-                int duration = 0;
-                var tl = currentSession?.GetTimelineProperties();
-                if (tl != null) duration = (int)(tl.EndTime - tl.StartTime).TotalSeconds;
-
-                string getUrl = $"https://lrclib.net/api/get?artist_name={Uri.EscapeDataString(currentArtist)}&track_name={Uri.EscapeDataString(currentTitle)}";
-                if (duration > 0) getUrl += $"&duration={duration}";
-
-                var resp = await http.GetAsync(getUrl);
-                if (resp.IsSuccessStatusCode)
-                {
-                    using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
-                    synced = GetSynced(doc.RootElement);
-                }
-
-                // Cadangan: pakai pencarian jika /get tidak menemukan
-                if (string.IsNullOrEmpty(synced))
-                {
-                    string searchUrl = $"https://lrclib.net/api/search?artist_name={Uri.EscapeDataString(currentArtist)}&track_name={Uri.EscapeDataString(currentTitle)}";
-                    var sresp = await http.GetAsync(searchUrl);
-                    if (sresp.IsSuccessStatusCode)
-                    {
-                        using var sdoc = JsonDocument.Parse(await sresp.Content.ReadAsStringAsync());
-                        foreach (var item in sdoc.RootElement.EnumerateArray())
-                        {
-                            synced = GetSynced(item);
-                            if (!string.IsNullOrEmpty(synced)) break;
-                        }
-                    }
-                }
-            }
-            catch { }
-
-            // Jika lagu sudah berganti selama proses download, abaikan hasilnya
-            if (key != lyricsKey) return;
-
-            if (!string.IsNullOrEmpty(synced))
-            {
-                lyricLines = ParseLrc(synced);
-            }
-
-            if (lyricLines.Count == 0)
-            {
-                SetLyric("Lirik tidak ditemukan", "");
-                LyricNext.Text = "";
-            }
-        }
-
-        private static string? GetSynced(JsonElement el)
-        {
-            if (el.TryGetProperty("syncedLyrics", out var p) && p.ValueKind == JsonValueKind.String)
-                return p.GetString();
-            return null;
-        }
-
-        private static List<(TimeSpan Time, string Text)> ParseLrc(string lrc)
-        {
-            var list = new List<(TimeSpan Time, string Text)>();
-            var rx = new Regex(@"\[(\d+):(\d+(?:\.\d+)?)\]");
-
-            foreach (var line in lrc.Split('\n'))
-            {
-                var matches = rx.Matches(line);
-                if (matches.Count == 0) continue;
-
-                string text = rx.Replace(line, "").Trim();
-                foreach (Match m in matches)
-                {
-                    double min = double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
-                    double sec = double.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);
-                    list.Add((TimeSpan.FromSeconds(min * 60 + sec), text));
-                }
-            }
-
-            return list.OrderBy(x => x.Time).ToList();
-        }
-
-        private void LyricTimer_Tick(object? sender, EventArgs e)
-        {
-            if (!showLyrics || currentSession == null || lyricLines.Count == 0) return;
-
-            var tl = currentSession.GetTimelineProperties();
-            var pb = currentSession.GetPlaybackInfo();
-
-            // Posisi lagu + waktu yang berlalu sejak terakhir diperbarui (agar halus)
-            TimeSpan pos = tl.Position;
-            if (pb.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
-                pos += DateTimeOffset.Now - tl.LastUpdatedTime;
-
-            int idx = -1;
-            for (int i = 0; i < lyricLines.Count; i++)
-            {
-                if (lyricLines[i].Time <= pos) idx = i;
-                else break;
-            }
-
-            if (idx == lastLyricIndex) return;
-            lastLyricIndex = idx;
-
-            string current = idx >= 0 ? lyricLines[idx].Text : "";
-            string next = idx + 1 < lyricLines.Count ? lyricLines[idx + 1].Text : "";
-            SetLyric(string.IsNullOrWhiteSpace(current) ? "♪" : current, next);
-        }
-
-        // ================= PILL KELUAR =================
-        private void MusicIcon_Click(object sender, MouseButtonEventArgs e)
+        // Menyesuaikan ukuran island dengan state saat ini (mode lirik + ukuran font)
+        private void ApplySize()
         {
             if (isIntroPlaying || isExiting) return;
 
-            if (isPillVisible) HideExitPill();
-            else ShowExitPill();
+            double width = isExpanded ? CurrentExpandedWidth : CollapsedWidth;
+            double height = isExpanded ? CurrentExpandedHeight : CollapsedHeight;
+            AnimateSize(width, height);
+            RepositionMenu(width, height);
         }
 
-        private void ShowExitPill()
+        // Dipanggil saat pengguna mencoba membuka aplikasi untuk kedua kalinya
+        public void OnSecondInstanceLaunched()
         {
-            if (isPillVisible) return;
-            isPillVisible = true;
+            if (isIntroPlaying || isExiting) return;
 
-            // Posisi akhir: di sebelah kanan island (mengikuti lebar island saat ini)
-            double targetX = IslandBorder.ActualWidth / 2 + 10 + ExitPill.Width / 2;
-            double startX = IslandBorder.ActualWidth / 2 - 20;   // muncul dari tepi island
+            // Saat island sedang expanded (mouse di atasnya), cukup mantul tanpa melebar
+            PlayBounceAnimation(widen: !isExpanded);
+        }
 
-            ExitPill.Visibility = Visibility.Visible;
+        // Melebar -> mantul ke bawah 3 kali (makin kecil) -> kembali ke ukuran normal.
+        // Jika menu terbuka, pill Setting/Keluar (dan panel pengaturan) ikut melebar dan mantul.
+        private void PlayBounceAnimation(bool widen)
+        {
+            const double WidenBy = 60;       // tambahan lebar saat melebar (px)
+            const double BounceStart = 300;  // mantul dimulai setelah melebar (ms)
+            const double BounceHalf = 120;   // durasi turun, dan juga naik, per mantulan (ms)
+            double[] heights = { 12, 8, 4 }; // jarak turun tiap mantulan (px); jumlah isi = jumlah mantulan
+
+            static KeyTime Ms(double ms) => KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(ms));
+
+            // 1. Lebar: island, pill, dan panel memakai keyframe yang sama supaya selalu sejajar
+            if (widen)
+            {
+                double from = IslandBorder.ActualWidth;
+                double normal = CollapsedWidth;
+                double wide = normal + WidenBy;
+
+                // map: mengubah lebar island menjadi nilai milik elemen yang dianimasikan
+                DoubleAnimationUsingKeyFrames WidthKeys(Func<double, double> map)
+                {
+                    var a = new DoubleAnimationUsingKeyFrames();
+                    a.KeyFrames.Add(new LinearDoubleKeyFrame(map(from), Ms(0)));
+                    a.KeyFrames.Add(new EasingDoubleKeyFrame(map(wide), Ms(300),
+                        new CubicEase { EasingMode = EasingMode.EaseOut }));
+                    a.KeyFrames.Add(new LinearDoubleKeyFrame(map(wide), Ms(1200)));
+                    a.KeyFrames.Add(new EasingDoubleKeyFrame(map(normal), Ms(1600),
+                        new CubicEase { EasingMode = EasingMode.EaseInOut }));
+                    return a;
+                }
+
+                IslandBorder.BeginAnimation(FrameworkElement.WidthProperty, WidthKeys(w => w));
+
+                if (isMenuVisible)
+                {
+                    // Pill menjaga jarak 10 px dari tepi island, jadi posisinya mengikuti lebar island
+                    SettingsPillTranslate.BeginAnimation(TranslateTransform.XProperty,
+                        WidthKeys(w => -(w / 2 + 10 + SettingsPill.Width / 2)));
+                    ExitPillTranslate.BeginAnimation(TranslateTransform.XProperty,
+                        WidthKeys(w => w / 2 + 10 + ExitPill.Width / 2));
+
+                    if (isSettingsOpen)
+                        SettingsPanel.BeginAnimation(FrameworkElement.WidthProperty,
+                            WidthKeys(w => SettingsPanelGeometry(w).Width));
+                }
+            }
+
+            // 2. Mantul: turun (melambat di titik bawah), lalu naik kembali (makin cepat), tiga kali
+            var bounce = new DoubleAnimationUsingKeyFrames();
+            double t = widen ? BounceStart : 0;
+            if (t > 0) bounce.KeyFrames.Add(new LinearDoubleKeyFrame(0, Ms(t)));   // diam dulu sambil melebar
+
+            foreach (double h in heights)
+            {
+                t += BounceHalf;
+                bounce.KeyFrames.Add(new EasingDoubleKeyFrame(h, Ms(t),
+                    new CubicEase { EasingMode = EasingMode.EaseOut }));
+                t += BounceHalf;
+                bounce.KeyFrames.Add(new EasingDoubleKeyFrame(0, Ms(t),
+                    new CubicEase { EasingMode = EasingMode.EaseIn }));
+            }
+
+            IslandShift.BeginAnimation(TranslateTransform.YProperty, bounce);
+
+            if (isMenuVisible)
+            {
+                // Pill dan panel ikut mantul sebagai satu kelompok dengan island
+                SettingsPillTranslate.BeginAnimation(TranslateTransform.YProperty, bounce);
+                ExitPillTranslate.BeginAnimation(TranslateTransform.YProperty, bounce);
+                if (isSettingsOpen)
+                    SettingsPanelShift.BeginAnimation(TranslateTransform.YProperty, bounce);
+            }
+        }
+
+        private void AnimateSize(double width, double height)
+        {
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var dur = TimeSpan.FromMilliseconds(300);
+
+            IslandBorder.BeginAnimation(FrameworkElement.WidthProperty,
+                new DoubleAnimation { To = width, Duration = dur, EasingFunction = ease });
+            IslandBorder.BeginAnimation(FrameworkElement.HeightProperty,
+                new DoubleAnimation { To = height, Duration = dur, EasingFunction = ease });
+        }
+
+        // ================= MENU (SETTING & KELUAR) =================
+        private void MenuIcon_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (isIntroPlaying || isExiting) return;
+
+            if (isMenuVisible) HideMenu();
+            else ShowMenu();
+        }
+
+        private void ShowMenu()
+        {
+            if (isMenuVisible) return;
+            isMenuVisible = true;
+
+            AnimateMenuIcon(toClose: true);
+            ShowPill(SettingsPill, SettingsPillScale, SettingsPillTranslate, -1);   // kiri
+            ShowPill(ExitPill, ExitPillScale, ExitPillTranslate, +1);               // kanan
+        }
+
+        private void HideMenu()
+        {
+            if (!isMenuVisible) return;
+            isMenuVisible = false;
+
+            AnimateMenuIcon(toClose: false);
+            HideSettingsPanel();
+            HidePill(SettingsPill, SettingsPillScale, SettingsPillTranslate, -1);
+            HidePill(ExitPill, ExitPillScale, ExitPillTranslate, +1);
+        }
+
+        // Ikon berputar 360°; di tengah putaran bentuknya berganti, dan warnanya bergradasi hijau <-> merah
+        private void AnimateMenuIcon(bool toClose)
+        {
+            var target = (Geometry)FindResource(toClose ? "CloseCircleIcon" : "ChevronCircleIcon");
+            var current = CompactMenuIcon.Data;
+
+            var total = TimeSpan.FromMilliseconds(400);
+            var middle = TimeSpan.FromMilliseconds(200);
+            var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
+
+            // Putaran (mulai dari sudut saat ini kalau animasi sebelumnya belum selesai)
+            double start = MenuIconRotate.Angle % 360;
+            MenuIconRotate.BeginAnimation(RotateTransform.AngleProperty,
+                new DoubleAnimation(start, start + 360, total) { EasingFunction = ease });
+
+            // Transisi warna: tanpa From, jadi mulai dari warna saat ini
+            MenuIconBrush.BeginAnimation(SolidColorBrush.ColorProperty,
+                new ColorAnimation
+                {
+                    To = toClose ? MenuIconRed : MenuIconGreen,
+                    Duration = total,
+                    EasingFunction = ease
+                });
+
+            // Ganti bentuk di tengah putaran
+            var swap = new ObjectAnimationUsingKeyFrames { Duration = total };
+            swap.KeyFrames.Add(new DiscreteObjectKeyFrame(current, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            swap.KeyFrames.Add(new DiscreteObjectKeyFrame(target, KeyTime.FromTimeSpan(middle)));
+            CompactMenuIcon.BeginAnimation(System.Windows.Shapes.Path.DataProperty, swap);
+        }
+
+        // side: -1 = kiri island, +1 = kanan island
+        private void ShowPill(Border pill, ScaleTransform scale, TranslateTransform translate, int side)
+        {
+            double half = IslandBorder.ActualWidth / 2;
+            double targetX = side * (half + 10 + pill.Width / 2);   // di samping island
+            double startX = side * (half - 20);                     // muncul dari tepi island
+
+            pill.Visibility = Visibility.Visible;
 
             var ease = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.4 };
             var dur = TimeSpan.FromMilliseconds(350);
 
-            ExitPillTranslate.BeginAnimation(TranslateTransform.XProperty,
+            translate.BeginAnimation(TranslateTransform.XProperty,
                 new DoubleAnimation(startX, targetX, dur) { EasingFunction = ease });
-            ExitPillScale.BeginAnimation(ScaleTransform.ScaleXProperty,
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty,
                 new DoubleAnimation(0.5, 1, dur) { EasingFunction = ease });
-            ExitPillScale.BeginAnimation(ScaleTransform.ScaleYProperty,
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty,
                 new DoubleAnimation(0.5, 1, dur) { EasingFunction = ease });
-            ExitPill.BeginAnimation(UIElement.OpacityProperty,
+            pill.BeginAnimation(UIElement.OpacityProperty,
                 new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(250)));
         }
 
-        private void HideExitPill()
+        private void HidePill(Border pill, ScaleTransform scale, TranslateTransform translate, int side)
         {
-            if (!isPillVisible) return;
-            isPillVisible = false;
-
             var dur = TimeSpan.FromMilliseconds(220);
             var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
 
-            ExitPillTranslate.BeginAnimation(TranslateTransform.XProperty,
-                new DoubleAnimation(IslandBorder.ActualWidth / 2 - 20, dur) { EasingFunction = ease });
-            ExitPillScale.BeginAnimation(ScaleTransform.ScaleXProperty,
+            translate.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(side * (IslandBorder.ActualWidth / 2 - 20), dur) { EasingFunction = ease });
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty,
                 new DoubleAnimation(0.5, dur) { EasingFunction = ease });
-            ExitPillScale.BeginAnimation(ScaleTransform.ScaleYProperty,
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty,
                 new DoubleAnimation(0.5, dur) { EasingFunction = ease });
 
             var fade = new DoubleAnimation(0, dur);
             fade.Completed += (s, e) =>
             {
-                if (!isPillVisible) ExitPill.Visibility = Visibility.Collapsed;
+                if (!isMenuVisible) pill.Visibility = Visibility.Collapsed;
             };
-            ExitPill.BeginAnimation(UIElement.OpacityProperty, fade);
+            pill.BeginAnimation(UIElement.OpacityProperty, fade);
         }
 
-        private void ExitPill_Click(object sender, MouseButtonEventArgs e)
+        private void SettingsPill_Click(object sender, MouseButtonEventArgs e)
         {
-            ExitWithAnimation();
+            if (isIntroPlaying || isExiting) return;
+
+            if (isSettingsOpen) HideSettingsPanel();
+            else ShowSettingsPanel();
         }
+
+        // Panel membentang dari tepi kiri pill Setting sampai tepi kanan island
+        private (double Width, double CenterX) SettingsPanelGeometry(double islandWidth)
+        {
+            double half = islandWidth / 2;
+            double left = -(half + 10 + SettingsPill.Width);   // tepi kiri pill Setting
+            double right = half;                               // tepi kanan island
+            return (right - left, (left + right) / 2);
+        }
+
+        private void LayoutSettingsPanel(double islandWidth, double islandHeight, TimeSpan duration)
+        {
+            var (width, centerX) = SettingsPanelGeometry(islandWidth);
+
+            // Margin kanan menggeser panel (yang rata tengah) ke posisi centerX; atas = di bawah island
+            var margin = new Thickness(0, 10 + islandHeight + 8, -2 * centerX, 0);
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+            SettingsPanel.BeginAnimation(FrameworkElement.WidthProperty,
+                new DoubleAnimation(width, duration) { EasingFunction = ease });
+            SettingsPanel.BeginAnimation(FrameworkElement.MarginProperty,
+                new ThicknessAnimation(margin, duration) { EasingFunction = ease });
+        }
+
+        private void ShowSettingsPanel()
+        {
+            if (isSettingsOpen) return;
+            isSettingsOpen = true;
+
+            LayoutSettingsPanel(IslandBorder.ActualWidth, IslandBorder.ActualHeight, TimeSpan.Zero);
+            SettingsPanel.Visibility = Visibility.Visible;
+
+            var ease = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.3 };
+            SettingsPanelScale.BeginAnimation(ScaleTransform.ScaleYProperty,
+                new DoubleAnimation(0.6, 1, TimeSpan.FromMilliseconds(300)) { EasingFunction = ease });
+            SettingsPanel.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(250)));
+        }
+
+        private void HideSettingsPanel()
+        {
+            if (!isSettingsOpen) return;
+            isSettingsOpen = false;
+
+            var dur = TimeSpan.FromMilliseconds(200);
+            SettingsPanelScale.BeginAnimation(ScaleTransform.ScaleYProperty,
+                new DoubleAnimation(0.6, dur) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } });
+
+            var fade = new DoubleAnimation(0, dur);
+            fade.Completed += (s, e) =>
+            {
+                if (!isSettingsOpen) SettingsPanel.Visibility = Visibility.Collapsed;
+            };
+            SettingsPanel.BeginAnimation(UIElement.OpacityProperty, fade);
+        }
+
+        // Saat island berubah ukuran (mode lirik + slider), pill dan panel ikut menyesuaikan
+        private void RepositionMenu(double islandWidth, double islandHeight)
+        {
+            if (!isMenuVisible) return;
+
+            var dur = TimeSpan.FromMilliseconds(300);
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            double half = islandWidth / 2;
+
+            SettingsPillTranslate.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(-(half + 10 + SettingsPill.Width / 2), dur) { EasingFunction = ease });
+            ExitPillTranslate.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(half + 10 + ExitPill.Width / 2, dur) { EasingFunction = ease });
+
+            if (isSettingsOpen) LayoutSettingsPanel(islandWidth, islandHeight, dur);
+        }
+
+        private void ExitPill_Click(object sender, MouseButtonEventArgs e) => ExitWithAnimation();
 
         // ================= ANIMASI KELUAR (KEBALIKAN INTRO) =================
         private void ExitWithAnimation()
@@ -571,13 +522,13 @@ namespace DynamicIslandDesktop
             if (isExiting) return;
             isExiting = true;
             isIntroPlaying = true;   // blokir hover selama animasi keluar
-            lyricTimer.Stop();
-            HideExitPill();
+            vm.StopTimers();
+            HideMenu();
 
-            // 1. Judul/lirik dan ikon musik memudar
+            // 1. Judul/lirik dan ikon menu memudar
             var fade = new DoubleAnimation { To = 0, Duration = TimeSpan.FromMilliseconds(250) };
             CompactTitleText.BeginAnimation(UIElement.OpacityProperty, fade);
-            CompactMusicIcon.BeginAnimation(UIElement.OpacityProperty, fade);
+            CompactMenuIcon.BeginAnimation(UIElement.OpacityProperty, fade);
 
             // 2. Island menyempit ke tengah, album art ikut bergeser ke tengah
             var widthAnim = new DoubleAnimation
