@@ -8,10 +8,9 @@ using DynamicIslandDesktop.Services;
 
 namespace DynamicIslandDesktop.ViewModels
 {
-    /// <summary>State yang ditampilkan island + command-nya. Bebas dari tipe WPF dan kontrol UI.</summary>
     public partial class MainViewModel : ObservableObject
     {
-        private const int MaxCompactLines = 3;   // maksimal baris lirik di compact
+        private const int MaxCompactLines = 3;
 
         private readonly MediaSessionService media;
         private readonly LyricsService lyrics;
@@ -47,34 +46,35 @@ namespace DynamicIslandDesktop.ViewModels
         [ObservableProperty]
         private string nextLyric = "";
 
-        /// <summary>Teks di island mode compact: lirik saat mode lirik, selain itu judul.</summary>
+        // ===== PROPERTI BARU UNTUK PROGRESS BAR & DURASI =====
+        [ObservableProperty]
+        private double progressPercent;
+
+        [ObservableProperty]
+        private string positionText = "0:00";
+
+        [ObservableProperty]
+        private string durationText = "0:00";
+
         public string CompactText =>
             ShowLyrics ? CurrentLyric : (HasMedia ? Title : "Tidak ada media");
 
-        // E769 = Pause, E768 = Play (Segoe MDL2 Assets)
         public string PlayPauseGlyph => IsPlaying ? "\uE769" : "\uE768";
 
-        // ================= UKURAN LIRIK (berskala dari pengaturan) =================
         public AppSettings Settings { get; }
 
-        /// <summary>1.0 = ukuran default. Dipakai View untuk menskalakan ukuran island.</summary>
         public double LyricScale => Settings.LyricFontSize / AppSettings.DefaultLyricFontSize;
-
         public double LyricCurrentFontSize => Settings.LyricFontSize;
         public double LyricNextFontSize => 11 * LyricScale;
         public double LyricMaxHeight => 40 * LyricScale;
-
-        /// <summary>Font teks di island compact: berskala hanya saat mode lirik.</summary>
         public double CompactFontSize => ShowLyrics ? 11 * LyricScale : 11;
-
-        /// <summary>Tinggi maksimal lirik compact (MaxCompactLines baris, berskala).</summary>
         public double CompactLyricMaxHeight => 15 * MaxCompactLines * LyricScale;
 
         public MainViewModel(MediaSessionService media, LyricsService lyrics, ITicker lyricTicker, AppSettings settings)
         {
             this.media = media;
             this.lyrics = lyrics;
-            this.lyricTicker = lyricTicker;   // pakai "this." karena nama parameter sama dengan field
+            this.lyricTicker = lyricTicker;
             Settings = settings;
 
             settings.PropertyChanged += (_, e) =>
@@ -89,14 +89,28 @@ namespace DynamicIslandDesktop.ViewModels
             };
 
             media.MediaChanged += OnMediaChanged;
-            media.PlaybackChanged += playing => IsPlaying = playing;
+            media.PlaybackChanged += playing =>
+            {
+                IsPlaying = playing;
+                UpdateTickerState();
+                UpdateTimelineUI();
+            };
+            media.TimelineChanged += UpdateTimelineUI;
 
-            lyricTicker.Tick += OnLyricTick;
+            lyricTicker.Tick += OnTick;
         }
 
         public Task InitializeAsync() => media.InitializeAsync();
 
         public void StopTimers() => lyricTicker.Stop();
+
+        private void UpdateTickerState()
+        {
+            if (HasMedia && (IsPlaying || ShowLyrics))
+                lyricTicker.Start();
+            else
+                lyricTicker.Stop();
+        }
 
         // ================= COMMANDS =================
         [RelayCommand] private Task PlayPauseAsync() => media.TogglePlayPauseAsync();
@@ -107,16 +121,12 @@ namespace DynamicIslandDesktop.ViewModels
         private async Task ToggleLyricsAsync()
         {
             ShowLyrics = !ShowLyrics;
+            UpdateTickerState();
 
             if (ShowLyrics)
             {
-                lastLyricIndex = -2;   // paksa refresh teks lirik
+                lastLyricIndex = -2;
                 await LoadLyricsAsync();
-                lyricTicker.Start();
-            }
-            else
-            {
-                lyricTicker.Stop();
             }
         }
 
@@ -135,6 +145,8 @@ namespace DynamicIslandDesktop.ViewModels
                 lines = new List<LyricLine>();
                 lastLyricIndex = -2;
                 SetLyric("Tidak ada media", "");
+                ResetTimelineUI();
+                UpdateTickerState();
                 return;
             }
 
@@ -146,8 +158,42 @@ namespace DynamicIslandDesktop.ViewModels
             Artist = string.IsNullOrEmpty(info.Artist) ? "Unknown Artist" : info.Artist;
             AlbumArt = info.Thumbnail;
 
+            UpdateTimelineUI();
+            UpdateTickerState();
+
             if (ShowLyrics) await LoadLyricsAsync();
         }
+
+        // ================= PROGRESS BAR & WAKTU =================
+        private void ResetTimelineUI()
+        {
+            ProgressPercent = 0;
+            PositionText = "0:00";
+            DurationText = "0:00";
+        }
+
+        private void UpdateTimelineUI()
+        {
+            if (!HasMedia)
+            {
+                ResetTimelineUI();
+                return;
+            }
+
+            var (pos, duration) = media.GetTimeline();
+            if (duration <= TimeSpan.Zero)
+            {
+                ResetTimelineUI();
+                return;
+            }
+
+            ProgressPercent = Math.Clamp((pos.TotalSeconds / duration.TotalSeconds) * 100.0, 0, 100);
+            PositionText = FormatTime(pos);
+            DurationText = FormatTime(duration);
+        }
+
+        private static string FormatTime(TimeSpan time) =>
+            time.TotalHours >= 1 ? time.ToString(@"h\:mm\:ss") : time.ToString(@"m\:ss");
 
         // ================= LIRIK =================
         private void SetLyric(string current, string next)
@@ -159,7 +205,7 @@ namespace DynamicIslandDesktop.ViewModels
         private async Task LoadLyricsAsync()
         {
             string key = $"{rawArtist}|{rawTitle}";
-            if (key == lyricsKey) return;   // lagu sama, tidak perlu load ulang
+            if (key == lyricsKey) return;
             lyricsKey = key;
 
             lines = new List<LyricLine>();
@@ -175,7 +221,6 @@ namespace DynamicIslandDesktop.ViewModels
 
             var result = await lyrics.FetchAsync(rawArtist, rawTitle, media.GetDurationSeconds());
 
-            // Jika lagu sudah berganti selama proses download, abaikan hasilnya
             if (key != lyricsKey) return;
 
             lines = result;
@@ -183,8 +228,11 @@ namespace DynamicIslandDesktop.ViewModels
                 SetLyric("Lirik tidak ditemukan", "");
         }
 
-        private void OnLyricTick()
+        // Dipanggil setiap ticker berdetak: update progress bar + lirik
+        private void OnTick()
         {
+            UpdateTimelineUI();
+
             if (!ShowLyrics || lines.Count == 0) return;
 
             var pos = media.GetPosition();
