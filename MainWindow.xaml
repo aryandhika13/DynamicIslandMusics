@@ -257,10 +257,10 @@
             </Grid>
         </Border>
 
-        <!-- Pop-up lirik di kiri island (hanya saat menempel di kanan) -->
+        <!-- Pop-up lirik di sisi seberang island (posisi & arah ekor diatur dari kode) -->
         <Grid x:Name="LyricBubble" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
-      HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,100,436,0"
-      RenderTransformOrigin="1,1">
+            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,100,436,0"
+            RenderTransformOrigin="1,1">
             <Grid.Effect>
                 <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.5" Color="Black"/>
             </Grid.Effect>
@@ -271,19 +271,18 @@
                 </TransformGroup>
             </Grid.RenderTransform>
 
-            <!-- Badan bubble: sisakan 8 px di kanan untuk ekor; sudut kanan bawah hampir lancip -->
-            <Border MaxWidth="300" MinHeight="36" CornerRadius="18,18,3,18" Background="#0F0F0F"
-            Padding="16,9" Margin="0,0,8,0">
+            <Border x:Name="LyricBubbleBody" MaxWidth="300" MinHeight="36" CornerRadius="18,18,3,18"
+            Background="#0F0F0F" Padding="16,9" Margin="0,0,8,0">
                 <TextBlock x:Name="LyricBubbleText" Foreground="White" FontWeight="SemiBold"
                    FontSize="{Binding Settings.LyricFontSize}"
                    TextWrapping="Wrap" MaxHeight="72" TextTrimming="CharacterEllipsis"/>
             </Border>
 
-            <!-- Ekor: menumpuk 4 px ke badan bubble, rata dengan tepi bawah, ujung runcing ke kanan -->
-            <Path Fill="#0F0F0F" Width="12" Height="12" Stretch="Fill"
+            <Path x:Name="LyricBubbleTail" Fill="#0F0F0F" Width="12" Height="12" Stretch="Fill"
           Data="M0,0 C0,7 4,11 12,12 L0,12 Z"
           HorizontalAlignment="Right" VerticalAlignment="Bottom"/>
         </Grid>
+        
         <!-- Pill kecil "Setting" di sebelah kiri island -->
         <Border x:Name="SettingsPill" Visibility="Collapsed" Opacity="0"
         Width="84" Height="36" CornerRadius="18" Background="#0F0F0F"
