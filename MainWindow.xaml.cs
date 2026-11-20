@@ -30,6 +30,8 @@ namespace DynamicIslandDesktop
         private const double DockedHeight = 225;
         private const double DockSnapDistance = 120;   // jarak ke tepi kanan layar agar island menempel (px)
         private bool isDocked = false;
+        private bool dockedLeft = false;
+        private int PillSide => dockedLeft ? +1 : -1;
 
         private readonly MainViewModel vm;
         private readonly AppSettings settings = new();
@@ -403,35 +405,45 @@ namespace DynamicIslandDesktop
             }
 
             var work = SystemParameters.WorkArea;
-            double islandRight = Left + ActualWidth / 2 + IslandBorder.ActualWidth / 2;
-            bool nearRight = work.Right - islandRight <= DockSnapDistance;
+            double center = Left + ActualWidth / 2;
+            double half = IslandBorder.ActualWidth / 2;
+            double distRight = work.Right - (center + half);
+            double distLeft = (center - half) - work.Left;
 
-            if (nearRight) DockRight(work);
+            bool nearRight = distRight <= DockSnapDistance;
+            bool nearLeft = distLeft <= DockSnapDistance;
+
+            if (nearRight || nearLeft)
+            {
+                bool toLeft = nearLeft && (!nearRight || distLeft < distRight);
+                DockTo(toLeft, work);
+            }
             else if (isDocked) Undock();
         }
 
-        private void DockRight(Rect work)
+        private void DockTo(bool left, Rect work)
         {
             // Kembali ke tampilan compact dulu
             isExpanded = false;
             CompactView.Visibility = Visibility.Visible;
             ExpandedView.Visibility = Visibility.Collapsed;
-            HideMenu();
+            HideMenu();   // masih memakai sisi lama, jadi harus sebelum dockedLeft diubah
 
+            dockedLeft = left;
             isDocked = true;
             ApplyDockedVisuals(true);
 
-            // Tepi kanan island = tepi kanan layar
-            double targetLeft = work.Right - DockedWidth / 2 - ActualWidth / 2;
+            // Tepi island = tepi layar (kiri atau kanan)
+            double targetLeft = left
+                ? work.Left + DockedWidth / 2 - ActualWidth / 2
+                : work.Right - DockedWidth / 2 - ActualWidth / 2;
             double minTop = work.Top - 10;
             double maxTop = Math.Max(minTop, work.Bottom - 10 - CurrentExpandedHeight);
             double targetTop = Math.Clamp(Top, minTop, maxTop);
 
             AnimateWindowTo(targetLeft, targetTop);
             AnimateSize(DockedWidth, DockedHeight);
-            AnimateWindowTo(targetLeft, targetTop);
-            AnimateSize(DockedWidth, DockedHeight);
-            UpdateLyricBubble();   
+            UpdateLyricBubble();
         }
 
         private void Undock()
@@ -459,7 +471,8 @@ namespace DynamicIslandDesktop
         // Menjaga tepi kanan island tetap menempel saat island melebar ke kiri (expanded)
         private void AnimateDockShift(double width)
         {
-            double x = isDocked ? -(width - DockedWidth) / 2 : 0;
+            double grow = (width - DockedWidth) / 2;
+            double x = isDocked ? (dockedLeft ? grow : -grow) : 0;
             IslandShift.BeginAnimation(TranslateTransform.XProperty,
                 new DoubleAnimation(x, TimeSpan.FromMilliseconds(300))
                 { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
@@ -517,33 +530,51 @@ namespace DynamicIslandDesktop
             }
         }
 
+        // Bubble berada di sisi seberang island: ekor menghadap island, sudut lancip di sisi ekor
+        private void ApplyBubbleSide()
+        {
+            bool left = dockedLeft;
+            LyricBubble.HorizontalAlignment = left ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+            LyricBubble.RenderTransformOrigin = new Point(left ? 0 : 1, 1);
+            LyricBubbleBody.CornerRadius = left ? new CornerRadius(18, 18, 18, 3) : new CornerRadius(18, 18, 3, 18);
+            LyricBubbleBody.Margin = left ? new Thickness(8, 0, 0, 0) : new Thickness(0, 0, 8, 0);
+            LyricBubbleTail.HorizontalAlignment = left ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+            LyricBubbleTail.Data = Geometry.Parse(left
+                ? "M12,0 C12,7 8,11 0,12 L12,12 Z"
+                : "M0,0 C0,7 4,11 12,12 L0,12 Z");
+        }
+
         private void PopInLyric(string text)
         {
             shownLyric = text;
             LyricBubbleText.Text = text;
+            ApplyBubbleSide();
 
-            // Mulai dari bawah, sejajar tombol Lyric: tepi bawah bubble = 12 px di atas tepi bawah pill
+            // Tepi bawah bubble = 12 px di atas tepi bawah pill; jarak 4 px dari tepi island
             double bottom = 10 + DockedHeight - 12;
-            LyricBubble.Margin = new Thickness(0, 0, ActualWidth / 2 + DockedWidth / 2 + 4, 0);
+            double gap = ActualWidth / 2 + DockedWidth / 2 + 4;
+            Thickness MarginFor(double top) => dockedLeft
+                ? new Thickness(gap, top, 0, 0)
+                : new Thickness(0, top, gap, 0);
+
             LyricBubble.VerticalAlignment = VerticalAlignment.Top;
-            LyricBubble.Margin = new Thickness(0, bottom - LyricBubble.MinHeight, ActualWidth / 2 + DockedWidth / 2 + 4, 0);
+            LyricBubble.Margin = MarginFor(0);
             LyricBubble.Visibility = Visibility.Visible;
             LyricBubble.UpdateLayout();
 
-            // Ekor di dasar bubble: geser ke atas sesuai tinggi bubble supaya tepi bawah tetap di tempat
-            double extra = Math.Max(0, LyricBubble.ActualHeight - LyricBubble.MinHeight);
-            LyricBubble.Margin = new Thickness(0, bottom - LyricBubble.MinHeight - extra,
-                ActualWidth / 2 + DockedWidth / 2 + 4, 0);
+            // Bubble yang lebih tinggi tumbuh ke atas, tepi bawahnya tetap
+            LyricBubble.Margin = MarginFor(bottom - LyricBubble.ActualHeight);
 
             var dur = TimeSpan.FromMilliseconds(320);
             var ease = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.4 };
+            double slideFrom = dockedLeft ? -16 : 16;   // masuk dari arah island
 
             LyricBubbleScale.BeginAnimation(ScaleTransform.ScaleXProperty,
                 new DoubleAnimation(0.8, 1, dur) { EasingFunction = ease });
             LyricBubbleScale.BeginAnimation(ScaleTransform.ScaleYProperty,
                 new DoubleAnimation(0.8, 1, dur) { EasingFunction = ease });
             LyricBubbleTranslate.BeginAnimation(TranslateTransform.XProperty,
-                new DoubleAnimation(16, 0, dur) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+                new DoubleAnimation(slideFrom, 0, dur) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
             LyricBubbleTranslate.BeginAnimation(TranslateTransform.YProperty,
                 new DoubleAnimation(12, 0, dur) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
             LyricBubble.BeginAnimation(UIElement.OpacityProperty,
@@ -589,12 +620,12 @@ namespace DynamicIslandDesktop
 
             if (isDocked)
             {
-                // Menempel di kanan: kedua pill bertumpuk di kiri island
+                // Menempel: kedua pill bertumpuk di sisi seberang layar
                 SettingsPill.Margin = new Thickness(0, 14, 0, 0);
                 ExitPill.Margin = new Thickness(0, 58, 0, 0);
                 AnimateDockMenuButton(toClose: true);
-                ShowPill(SettingsPill, SettingsPillScale, SettingsPillTranslate, -1);
-                ShowPill(ExitPill, ExitPillScale, ExitPillTranslate, -1);
+                ShowPill(SettingsPill, SettingsPillScale, SettingsPillTranslate, PillSide);
+                ShowPill(ExitPill, ExitPillScale, ExitPillTranslate, PillSide);
             }
             else
             {
@@ -603,7 +634,7 @@ namespace DynamicIslandDesktop
                 ShowPill(SettingsPill, SettingsPillScale, SettingsPillTranslate, -1);   // kiri
                 ShowPill(ExitPill, ExitPillScale, ExitPillTranslate, +1);               // kanan
             }
-            UpdateLyricBubble();   // bubble lirik disembunyikan selama menu terbuka
+            UpdateLyricBubble();
         }
 
         private void HideMenu()
@@ -615,8 +646,8 @@ namespace DynamicIslandDesktop
             else AnimateMenuIcon(toClose: false);
 
             HideSettingsPanel();
-            HidePill(SettingsPill, SettingsPillScale, SettingsPillTranslate, -1);
-            HidePill(ExitPill, ExitPillScale, ExitPillTranslate, isDocked ? -1 : +1);
+            HidePill(SettingsPill, SettingsPillScale, SettingsPillTranslate, isDocked ? PillSide : -1);
+            HidePill(ExitPill, ExitPillScale, ExitPillTranslate, isDocked ? PillSide : +1);
             UpdateLyricBubble();
         }
 
@@ -716,10 +747,10 @@ namespace DynamicIslandDesktop
 
             if (isDocked)
             {
-                // Panel di kiri pill Setting, sejajar dengan pill tersebut
+                // Panel di sebelah pill Setting (sisi yang sama dengan pill), sejajar dengan pill tersebut
                 width = 274;
-                double pillLeft = -(DockedWidth / 2 + 10 + SettingsPill.Width);
-                centerX = pillLeft - 8 - width / 2;
+                double pillEdge = DockedWidth / 2 + 10 + SettingsPill.Width;   // tepi pill terjauh dari tengah
+                centerX = PillSide * (pillEdge + 8 + width / 2);
                 top = 14;
             }
             else
@@ -779,7 +810,7 @@ namespace DynamicIslandDesktop
 
             if (isDocked)
             {
-                double x = -(DockedWidth / 2 + 10 + SettingsPill.Width / 2);
+                double x = PillSide * (DockedWidth / 2 + 10 + SettingsPill.Width / 2);
                 SettingsPillTranslate.BeginAnimation(TranslateTransform.XProperty,
                     new DoubleAnimation(x, dur) { EasingFunction = ease });
                 ExitPillTranslate.BeginAnimation(TranslateTransform.XProperty,
