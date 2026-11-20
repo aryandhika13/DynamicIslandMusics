@@ -9,6 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Threading;
 
 namespace DynamicIslandDesktop
@@ -16,22 +17,31 @@ namespace DynamicIslandDesktop
     /// <summary>View: hanya animasi, posisi window, dan event murni UI. Logika ada di ViewModel/Service.</summary>
     public partial class MainWindow : Window
     {
-        // Ukuran dasar (ukuran font lirik = default). Saat mode lirik, ukuran ikut skala font.
-        private const double CompactWidth = 180;
-        private const double CompactHeight = 45;
-        private const double CompactTextOverhead = 93;   // album 30 + ikon 30 + margin 16 + 16 + 1
-        private const double CompactTextPadding = 24;    // ruang atas-bawah di sekitar teks
-        private const double ExpandedWidth = 360;
-        private const double ExpandedHeight = 140;
-        private static readonly Color MenuIconGreen = Color.FromRgb(0x1D, 0xB9, 0x54);   // ikon panah
-        private static readonly Color MenuIconRed = Color.FromRgb(0xFF, 0x52, 0x52);     // ikon silang
+        private const double CompactWidth = 248;
+        private const double CompactHeight = 46;
+        private const double CompactTextOverhead = 116;
+        private const double CompactTextPadding = 24;
+        private const double ExpandedWidth = 340;
+        private const double ExpandedHeight = 132;
+        private static readonly Color MenuIconGreen = Color.FromRgb(0x1D, 0xB9, 0x54);
+        private static readonly Color MenuIconRed = Color.FromRgb(0xFF, 0x52, 0x52);
 
-        private const double DockedWidth = 48;
-        private const double DockedHeight = 225;
-        private const double DockSnapDistance = 120;   // jarak ke tepi kanan layar agar island menempel (px)
+        private const double DockedWidth = 60;
+        private const double DockedHeight = 270;
+        private const double DockSnapDistance = 120;
         private bool isDocked = false;
         private bool dockedLeft = false;
         private int PillSide => dockedLeft ? +1 : -1;
+
+        // Field di MainWindow:
+        private readonly AudioBeatService beatService = new();
+        private Border[]? beatBars;
+        private Border[]? compactBeatBars;
+        private readonly double[] barLevels = new double[7];
+        private readonly double[] compactBarLevels = new double[5];
+        private readonly DispatcherTimer chartTimer = new() { Interval = TimeSpan.FromMilliseconds(40) };
+        private double currentBeatEnergy = 0;
+        private long lastRealBeatTick = 0;
 
         private readonly MainViewModel vm;
         private readonly AppSettings settings = new();
@@ -40,16 +50,20 @@ namespace DynamicIslandDesktop
         private bool isExpanded = false;
         private bool isRotating = false;
         private bool isMenuVisible = false;
-        private int menuIconVersion;
         private bool isExiting = false;
         private bool isIntroPlaying = true;
         private int lyricBubbleVersion;
+
+        private Brush? normalBackground;
+        private Brush? normalBorderBrush;
+        private Thickness normalBorderThickness;
+        private Effect? normalEffect;
+        private CornerRadius normalCornerRadius;
         private string? shownLyric;
 
-        // Skala hanya berlaku saat mode lirik aktif (mode judul/artis tidak berubah)
         private double Scale => vm.ShowLyrics ? vm.LyricScale : 1.0;
 
-        private double CollapsedWidth => isDocked ? DockedWidth : (vm.ShowLyrics ? 80 + 240 * Scale : CompactWidth);   // skala 1 = 320
+        private double CollapsedWidth => isDocked ? DockedWidth : (vm.ShowLyrics ? 80 + 240 * Scale : CompactWidth);
         private double CollapsedHeight
         {
             get
@@ -58,7 +72,6 @@ namespace DynamicIslandDesktop
                 double baseHeight = CompactHeight + (Scale - 1) * 20;
                 if (!vm.ShowLyrics) return baseHeight;
 
-                // Tinggi lirik yang membungkus ke bawah; island tumbuh mengikuti jumlah barisnya
                 var typeface = new Typeface(CompactTitleText.FontFamily, CompactTitleText.FontStyle,
                     CompactTitleText.FontWeight, CompactTitleText.FontStretch);
 
@@ -72,26 +85,44 @@ namespace DynamicIslandDesktop
         }
         private double CurrentExpandedWidth => ExpandedWidth + (Scale - 1) * 200;
         private double CurrentExpandedHeight =>
-    Math.Max(ExpandedHeight + (Scale - 1) * 70, isDocked ? DockedHeight : 0);
+            Math.Max(ExpandedHeight + (Scale - 1) * 70, isDocked ? DockedHeight : 0);
 
         public MainWindow()
         {
             InitializeComponent();
 
             AlbumContainer.MouseEnter += AlbumContainer_MouseEnter;
+            DockAlbum.MouseEnter += AlbumContainer_MouseEnter;
+
+            normalBackground = IslandBorder.Background;
+            normalBorderBrush = IslandBorder.BorderBrush;
+            normalBorderThickness = IslandBorder.BorderThickness;
+            normalEffect = IslandBorder.Effect;
+            normalCornerRadius = IslandBorder.CornerRadius;
+
             SettingsPill.MouseEnter += Pill_MouseEnter;
             SettingsPill.MouseLeave += Pill_MouseLeave;
             ExitPill.MouseEnter += Pill_MouseEnter;
             ExitPill.MouseLeave += Pill_MouseLeave;
+
             vm = new MainViewModel(new MediaSessionService(), new LyricsService(), new DispatcherTicker(), settings);
             vm.PropertyChanged += Vm_PropertyChanged;
             settings.PropertyChanged += Settings_PropertyChanged;
             DataContext = vm;
+
+            beatBars = new[] { BeatBar0, BeatBar1, BeatBar2, BeatBar3, BeatBar4, BeatBar5, BeatBar6 };
+            compactBeatBars = new[] { CompactBar0, CompactBar1, CompactBar2, CompactBar3, CompactBar4 };
+            chartTimer.Tick += (_, __) => OnChartTimerTick();
+            beatService.BeatUpdated += OnBeatUpdated;
+            Closed += (_, __) =>
+            {
+                chartTimer.Stop();
+                beatService.Dispose();
+            };
         }
 
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
-            // Posisikan window di tengah atas layar
             Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
             Top = 0;
 
@@ -100,14 +131,32 @@ namespace DynamicIslandDesktop
             await vm.InitializeAsync();
         }
 
-        // Bereaksi terhadap perubahan state ViewModel yang punya efek visual non-binding
         private void Vm_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
             switch (e.PropertyName)
             {
                 case nameof(MainViewModel.IsPlaying):
-                    if (vm.IsPlaying) StartRotation();
-                    else StopRotation();
+                    if (vm.IsPlaying)
+                    {
+                        StartRotation();
+                        if (!isExiting)
+                        {
+                            beatService.Start();
+                            if (!chartTimer.IsEnabled) chartTimer.Start();
+                        }
+                    }
+                    else
+                    {
+                        StopRotation();
+                        beatService.Stop();
+                        chartTimer.Stop();
+                        currentBeatEnergy = 0;
+                        ApplyBeatChartHeights(0);
+                    }
+                    break;
+
+                case nameof(MainViewModel.ProgressPercent):
+                    UpdateDockProgressArc(vm.ProgressPercent);
                     break;
 
                 case nameof(MainViewModel.ShowLyrics):
@@ -147,7 +196,6 @@ namespace DynamicIslandDesktop
         // ================= ANIMASI PEMBUKA =================
         private void PlayIntroAnimation()
         {
-            // 1. Album art muncul di tengah (membesar + fade in)
             var popAnim = new DoubleAnimation
             {
                 From = 0.3,
@@ -161,7 +209,6 @@ namespace DynamicIslandDesktop
             AlbumContainer.BeginAnimation(UIElement.OpacityProperty,
                 new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(300)));
 
-            // 2. Island melebar, album art ikut bergeser ke kiri
             var widthAnim = new DoubleAnimation
             {
                 To = CompactWidth,
@@ -172,7 +219,6 @@ namespace DynamicIslandDesktop
             widthAnim.Completed += (s, e) => isIntroPlaying = false;
             IslandBorder.BeginAnimation(FrameworkElement.WidthProperty, widthAnim);
 
-            // 3. Judul dan ikon menu muncul perlahan
             var fadeAnim = new DoubleAnimation
             {
                 From = 0,
@@ -181,6 +227,7 @@ namespace DynamicIslandDesktop
                 Duration = TimeSpan.FromMilliseconds(400)
             };
             CompactTitleText.BeginAnimation(UIElement.OpacityProperty, fadeAnim);
+            CompactBeatChart.BeginAnimation(UIElement.OpacityProperty, fadeAnim);
             CompactMenuIcon.BeginAnimation(UIElement.OpacityProperty, fadeAnim);
         }
 
@@ -190,15 +237,18 @@ namespace DynamicIslandDesktop
             if (isRotating || !settings.RotateAlbumArt) return;
             isRotating = true;
 
-            double start = AlbumRotate.Angle % 360;
-            var anim = new DoubleAnimation
+            foreach (var rotate in new[] { AlbumRotate, DockAlbumRotate })
             {
-                From = start,
-                To = start + 360,
-                Duration = TimeSpan.FromSeconds(8),   // makin kecil = makin cepat
-                RepeatBehavior = RepeatBehavior.Forever
-            };
-            AlbumRotate.BeginAnimation(RotateTransform.AngleProperty, anim);
+                double start = rotate.Angle % 360;
+                var anim = new DoubleAnimation
+                {
+                    From = start,
+                    To = start + 360,
+                    Duration = TimeSpan.FromSeconds(8),
+                    RepeatBehavior = RepeatBehavior.Forever
+                };
+                rotate.BeginAnimation(RotateTransform.AngleProperty, anim);
+            }
         }
 
         private void StopRotation()
@@ -206,10 +256,12 @@ namespace DynamicIslandDesktop
             if (!isRotating) return;
             isRotating = false;
 
-            // Simpan sudut saat ini supaya berhenti di posisi terakhir (tidak lompat ke 0)
-            double current = AlbumRotate.Angle;
-            AlbumRotate.BeginAnimation(RotateTransform.AngleProperty, null);
-            AlbumRotate.Angle = current;
+            foreach (var rotate in new[] { AlbumRotate, DockAlbumRotate })
+            {
+                double current = rotate.Angle;
+                rotate.BeginAnimation(RotateTransform.AngleProperty, null);
+                rotate.Angle = current;
+            }
         }
 
         // ================= ANIMASI EXPAND / COLLAPSE (HOVER) =================
@@ -220,37 +272,38 @@ namespace DynamicIslandDesktop
         private void SetExpanded(bool expand)
         {
             if (isIntroPlaying) return;
-
-            // Saat menu (Setting/Keluar) terbuka, hover tidak boleh memperbesar island
             if (expand && isMenuVisible) return;
-
             if (isExpanded == expand) return;
             isExpanded = expand;
 
-            var widthAnimation = new DoubleAnimation
-            {
-                To = expand ? CurrentExpandedWidth : CollapsedWidth,
-                Duration = TimeSpan.FromMilliseconds(300),
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-            };
-            var heightAnimation = new DoubleAnimation
-            {
-                To = expand ? CurrentExpandedHeight : CollapsedHeight,
-                Duration = TimeSpan.FromMilliseconds(300),
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-            };
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var dur = TimeSpan.FromMilliseconds(280);
+
+            double targetW = expand ? CurrentExpandedWidth : CollapsedWidth;
+            double targetH = expand ? CurrentExpandedHeight : CollapsedHeight;
 
             CompactView.Visibility = expand ? Visibility.Collapsed : Visibility.Visible;
             ExpandedView.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
 
-            IslandBorder.BeginAnimation(FrameworkElement.WidthProperty, widthAnimation);
-            IslandBorder.BeginAnimation(FrameworkElement.HeightProperty, heightAnimation);
-            AnimateDockShift(expand ? CurrentExpandedWidth : CollapsedWidth);
-            AnimateDockShift(expand ? CurrentExpandedWidth : CollapsedWidth);
-            UpdateLyricBubble();   
+            IslandBorder.BeginAnimation(FrameworkElement.WidthProperty,
+                new DoubleAnimation { To = targetW, Duration = dur, EasingFunction = ease });
+            IslandBorder.BeginAnimation(FrameworkElement.HeightProperty,
+                new DoubleAnimation { To = targetH, Duration = dur, EasingFunction = ease });
+
+            if (!isDocked)
+            {
+                double targetRadius = expand ? 22 : 23;
+                normalCornerRadius = new CornerRadius(targetRadius);
+                IslandBorder.CornerRadius = normalCornerRadius;
+            }
+
+            AnimateDockShift(targetW);
+            // Di SetExpanded(bool expand), setelah AnimateDockShift(targetW):
+            if (!expand && vm.IsPlaying && !isExiting && !chartTimer.IsEnabled)
+                chartTimer.Start();
+            UpdateLyricBubble();
         }
 
-        // Menyesuaikan ukuran island dengan state saat ini (mode lirik + ukuran font)
         private void ApplySize()
         {
             if (isIntroPlaying || isExiting) return;
@@ -261,34 +314,27 @@ namespace DynamicIslandDesktop
             RepositionMenu(width, height);
         }
 
-        // Dipanggil saat pengguna mencoba membuka aplikasi untuk kedua kalinya
         public void OnSecondInstanceLaunched()
         {
             if (isIntroPlaying || isExiting) return;
-
-            // Saat island sedang expanded (mouse di atasnya), cukup mantul tanpa melebar
             PlayBounceAnimation(widen: !isExpanded && !isDocked);
         }
 
-        // Melebar -> mantul ke bawah 3 kali (makin kecil) -> kembali ke ukuran normal.
-        // Jika menu terbuka, pill Setting/Keluar (dan panel pengaturan) ikut melebar dan mantul.
         private void PlayBounceAnimation(bool widen)
         {
-            const double WidenBy = 60;       // tambahan lebar saat melebar (px)
-            const double BounceStart = 300;  // mantul dimulai setelah melebar (ms)
-            const double BounceHalf = 120;   // durasi turun, dan juga naik, per mantulan (ms)
-            double[] heights = { 12, 8, 4 }; // jarak turun tiap mantulan (px); jumlah isi = jumlah mantulan
+            const double WidenBy = 60;
+            const double BounceStart = 300;
+            const double BounceHalf = 120;
+            double[] heights = { 12, 8, 4 };
 
             static KeyTime Ms(double ms) => KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(ms));
 
-            // 1. Lebar: island, pill, dan panel memakai keyframe yang sama supaya selalu sejajar
             if (widen)
             {
                 double from = IslandBorder.ActualWidth;
                 double normal = CollapsedWidth;
                 double wide = normal + WidenBy;
 
-                // map: mengubah lebar island menjadi nilai milik elemen yang dianimasikan
                 DoubleAnimationUsingKeyFrames WidthKeys(Func<double, double> map)
                 {
                     var a = new DoubleAnimationUsingKeyFrames();
@@ -305,7 +351,6 @@ namespace DynamicIslandDesktop
 
                 if (isMenuVisible)
                 {
-                    // Pill menjaga jarak 10 px dari tepi island, jadi posisinya mengikuti lebar island
                     SettingsPillTranslate.BeginAnimation(TranslateTransform.XProperty,
                         WidthKeys(w => -(w / 2 + 10 + SettingsPill.Width / 2)));
                     ExitPillTranslate.BeginAnimation(TranslateTransform.XProperty,
@@ -317,10 +362,9 @@ namespace DynamicIslandDesktop
                 }
             }
 
-            // 2. Mantul: turun (melambat di titik bawah), lalu naik kembali (makin cepat), tiga kali
             var bounce = new DoubleAnimationUsingKeyFrames();
             double t = widen ? BounceStart : 0;
-            if (t > 0) bounce.KeyFrames.Add(new LinearDoubleKeyFrame(0, Ms(t)));   // diam dulu sambil melebar
+            if (t > 0) bounce.KeyFrames.Add(new LinearDoubleKeyFrame(0, Ms(t)));
 
             foreach (double h in heights)
             {
@@ -336,7 +380,6 @@ namespace DynamicIslandDesktop
 
             if (isMenuVisible)
             {
-                // Pill dan panel ikut mantul sebagai satu kelompok dengan island
                 SettingsPillTranslate.BeginAnimation(TranslateTransform.YProperty, bounce);
                 ExitPillTranslate.BeginAnimation(TranslateTransform.YProperty, bounce);
                 if (isSettingsOpen)
@@ -356,8 +399,7 @@ namespace DynamicIslandDesktop
             AnimateDockShift(width);
         }
 
-        // ================= DRAG & DOCK KE KANAN =================
-        // Saat menempel, tombol sudah ada di pill; hover di album art untuk melihat judul/lirik (expanded)
+        // ================= DRAG & DOCK KE KIRI/KANAN =================
         private void AlbumContainer_MouseEnter(object sender, MouseEventArgs e)
         {
             if (isDocked) SetExpanded(true);
@@ -367,16 +409,16 @@ namespace DynamicIslandDesktop
         {
             if (isIntroPlaying || isExiting) return;
             if (e.ButtonState != MouseButtonState.Pressed) return;
-            if (IsInteractiveSource(e.OriginalSource as DependencyObject)) return;   // tombol & ikon menu tetap bisa diklik
+            if (IsInteractiveSource(e.OriginalSource as DependencyObject)) return;
 
             double oldLeft = Left, oldTop = Top;
-            if (isDocked) HideLyricBubble(immediate: true);   // <-- baru
+            if (isDocked) HideLyricBubble(immediate: true);
             try { DragMove(); }
             catch (InvalidOperationException) { return; }
 
             if (Math.Abs(Left - oldLeft) < 1 && Math.Abs(Top - oldTop) < 1)
             {
-                UpdateLyricBubble();   // <-- baru
+                UpdateLyricBubble();
                 return;
             }
             OnDragCompleted();
@@ -395,7 +437,6 @@ namespace DynamicIslandDesktop
 
         private void OnDragCompleted()
         {
-            // Jika island sedang bergeser karena offset dock, jadikan posisi window yang sebenarnya
             double shiftX = IslandShift.X;
             if (shiftX != 0)
             {
@@ -423,17 +464,27 @@ namespace DynamicIslandDesktop
 
         private void DockTo(bool left, Rect work)
         {
-            // Kembali ke tampilan compact dulu
             isExpanded = false;
             CompactView.Visibility = Visibility.Visible;
             ExpandedView.Visibility = Visibility.Collapsed;
-            HideMenu();   // masih memakai sisi lama, jadi harus sebelum dockedLeft diubah
+            HideMenu();
 
             dockedLeft = left;
             isDocked = true;
             ApplyDockedVisuals(true);
 
-            // Tepi island = tepi layar (kiri atau kanan)
+            // Pastikan chartTimer & beatService aktif jika lagu sedang diputar
+            if (vm.IsPlaying && !isExiting)
+            {
+                beatService.Start();
+                if (!chartTimer.IsEnabled)
+                    chartTimer.Start();
+            }
+            else
+            {
+                ApplyBeatChartHeights(0);
+            }
+
             double targetLeft = left
                 ? work.Left + DockedWidth / 2 - ActualWidth / 2
                 : work.Right - DockedWidth / 2 - ActualWidth / 2;
@@ -451,6 +502,9 @@ namespace DynamicIslandDesktop
             HideMenu();
             isDocked = false;
             isExpanded = false;
+            chartTimer.Stop();
+            currentBeatEnergy = 0;
+            ApplyBeatChartHeights(0);
             CompactView.Visibility = Visibility.Visible;
             ExpandedView.Visibility = Visibility.Collapsed;
             ApplyDockedVisuals(false);
@@ -458,17 +512,34 @@ namespace DynamicIslandDesktop
             AnimateSize(CollapsedWidth, CollapsedHeight);
         }
 
-        // Mode vertikal: hanya album art di atas + grip; judul & ikon menu disembunyikan
         private void ApplyDockedVisuals(bool docked)
         {
             HoverZone.Visibility = docked ? Visibility.Collapsed : Visibility.Visible;
             MenuIconButton.Visibility = docked ? Visibility.Collapsed : Visibility.Visible;
+            AlbumContainer.Visibility = docked ? Visibility.Collapsed : Visibility.Visible;
+            AlbumContainer.VerticalAlignment = VerticalAlignment.Center;
+            AlbumContainer.Margin = new Thickness(0);
             DockControls.Visibility = docked ? Visibility.Visible : Visibility.Collapsed;
-            AlbumContainer.VerticalAlignment = docked ? VerticalAlignment.Top : VerticalAlignment.Center;
-            AlbumContainer.Margin = docked ? new Thickness(0, 4, 0, 0) : new Thickness(0);
+            CompactBeatChart.Visibility = docked ? Visibility.Collapsed : Visibility.Visible;
+
+            if (docked)
+            {
+                IslandBorder.Background = (Brush)FindResource("DockedBackground");
+                IslandBorder.BorderBrush = (Brush)FindResource("DockedBorderBrush");
+                IslandBorder.BorderThickness = new Thickness(1);
+                IslandBorder.Effect = (Effect)FindResource("DockedGlow");
+                IslandBorder.CornerRadius = new CornerRadius(DockedWidth / 2);
+            }
+            else
+            {
+                IslandBorder.Background = normalBackground;
+                IslandBorder.BorderBrush = normalBorderBrush;
+                IslandBorder.BorderThickness = normalBorderThickness;
+                IslandBorder.Effect = normalEffect;
+                IslandBorder.CornerRadius = normalCornerRadius;
+            }
         }
 
-        // Menjaga tepi kanan island tetap menempel saat island melebar ke kiri (expanded)
         private void AnimateDockShift(double width)
         {
             double grow = (width - DockedWidth) / 2;
@@ -481,7 +552,7 @@ namespace DynamicIslandDesktop
         private void AnimateWindowTo(double left, double top)
         {
             double fromLeft = Left, fromTop = Top;
-            Left = left;   // nilai akhir diset langsung, animasi hanya untuk transisi
+            Left = left;
             Top = top;
 
             var dur = TimeSpan.FromMilliseconds(350);
@@ -512,7 +583,6 @@ namespace DynamicIslandDesktop
 
             if (LyricBubble.Visibility == Visibility.Visible && LyricBubble.Opacity > 0.05)
             {
-                // Lirik lama bergeser ke atas sambil memudar, baru lirik baru muncul dari bawah
                 var dur = TimeSpan.FromMilliseconds(220);
                 var fadeOut = new DoubleAnimation(0, dur)
                 { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } };
@@ -530,18 +600,19 @@ namespace DynamicIslandDesktop
             }
         }
 
-        // Bubble berada di sisi seberang island: ekor menghadap island, sudut lancip di sisi ekor
         private void ApplyBubbleSide()
         {
             bool left = dockedLeft;
-            LyricBubble.HorizontalAlignment = left ? HorizontalAlignment.Left : HorizontalAlignment.Right;
-            LyricBubble.RenderTransformOrigin = new Point(left ? 0 : 1, 1);
-            LyricBubbleBody.CornerRadius = left ? new CornerRadius(18, 18, 18, 3) : new CornerRadius(18, 18, 3, 18);
+            var side = left ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+
+            LyricBubble.HorizontalAlignment = side;
+            LyricBubble.RenderTransformOrigin = new Point(left ? 0 : 1, 0.5);
             LyricBubbleBody.Margin = left ? new Thickness(8, 0, 0, 0) : new Thickness(0, 0, 8, 0);
-            LyricBubbleTail.HorizontalAlignment = left ? HorizontalAlignment.Left : HorizontalAlignment.Right;
-            LyricBubbleTail.Data = Geometry.Parse(left
-                ? "M12,0 C12,7 8,11 0,12 L12,12 Z"
-                : "M0,0 C0,7 4,11 12,12 L0,12 Z");
+
+            // Ekor menunjuk ke arah kapsul
+            LyricBubbleLink.HorizontalAlignment = side;
+            LyricBubbleTailFill.Data = Geometry.Parse(left ? "M 9,0 L 0,6 L 9,12 Z" : "M 0,0 L 9,6 L 0,12 Z");
+            LyricBubbleTailLine.Data = Geometry.Parse(left ? "M 8.5,0 L 0.5,6 L 8.5,12" : "M 0.5,0 L 8.5,6 L 0.5,12");
         }
 
         private void PopInLyric(string text)
@@ -550,8 +621,7 @@ namespace DynamicIslandDesktop
             LyricBubbleText.Text = text;
             ApplyBubbleSide();
 
-            // Tepi bawah bubble = 12 px di atas tepi bawah pill; jarak 4 px dari tepi island
-            double bottom = 10 + DockedHeight - 12;
+            double center = 10 + DockedHeight / 2;
             double gap = ActualWidth / 2 + DockedWidth / 2 + 4;
             Thickness MarginFor(double top) => dockedLeft
                 ? new Thickness(gap, top, 0, 0)
@@ -562,12 +632,11 @@ namespace DynamicIslandDesktop
             LyricBubble.Visibility = Visibility.Visible;
             LyricBubble.UpdateLayout();
 
-            // Bubble yang lebih tinggi tumbuh ke atas, tepi bawahnya tetap
-            LyricBubble.Margin = MarginFor(bottom - LyricBubble.ActualHeight);
+            LyricBubble.Margin = MarginFor(center - LyricBubble.ActualHeight / 2);
 
             var dur = TimeSpan.FromMilliseconds(320);
             var ease = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.4 };
-            double slideFrom = dockedLeft ? -16 : 16;   // masuk dari arah island
+            double slideFrom = dockedLeft ? -16 : 16;
 
             LyricBubbleScale.BeginAnimation(ScaleTransform.ScaleXProperty,
                 new DoubleAnimation(0.8, 1, dur) { EasingFunction = ease });
@@ -620,7 +689,6 @@ namespace DynamicIslandDesktop
 
             if (isDocked)
             {
-                // Menempel: kedua pill bertumpuk di sisi seberang layar
                 SettingsPill.Margin = new Thickness(0, 14, 0, 0);
                 ExitPill.Margin = new Thickness(0, 58, 0, 0);
                 AnimateDockMenuButton(toClose: true);
@@ -631,8 +699,8 @@ namespace DynamicIslandDesktop
             {
                 SettingsPill.Margin = ExitPill.Margin = new Thickness(0, 14, 0, 0);
                 AnimateMenuIcon(toClose: true);
-                ShowPill(SettingsPill, SettingsPillScale, SettingsPillTranslate, -1);   // kiri
-                ShowPill(ExitPill, ExitPillScale, ExitPillTranslate, +1);               // kanan
+                ShowPill(SettingsPill, SettingsPillScale, SettingsPillTranslate, -1);
+                ShowPill(ExitPill, ExitPillScale, ExitPillTranslate, +1);
             }
             UpdateLyricBubble();
         }
@@ -651,7 +719,6 @@ namespace DynamicIslandDesktop
             UpdateLyricBubble();
         }
 
-        // Ikon berputar 360°; di tengah putaran bentuknya berganti, dan warnanya bergradasi hijau <-> merah
         private void AnimateMenuIcon(bool toClose)
         {
             var target = (Geometry)FindResource(toClose ? "CloseCircleIcon" : "ChevronCircleIcon");
@@ -661,12 +728,10 @@ namespace DynamicIslandDesktop
             var middle = TimeSpan.FromMilliseconds(200);
             var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
 
-            // Putaran (mulai dari sudut saat ini kalau animasi sebelumnya belum selesai)
             double start = MenuIconRotate.Angle % 360;
             MenuIconRotate.BeginAnimation(RotateTransform.AngleProperty,
                 new DoubleAnimation(start, start + 360, total) { EasingFunction = ease });
 
-            // Transisi warna: tanpa From, jadi mulai dari warna saat ini
             MenuIconBrush.BeginAnimation(SolidColorBrush.ColorProperty,
                 new ColorAnimation
                 {
@@ -675,19 +740,17 @@ namespace DynamicIslandDesktop
                     EasingFunction = ease
                 });
 
-            // Ganti bentuk di tengah putaran
             var swap = new ObjectAnimationUsingKeyFrames { Duration = total };
             swap.KeyFrames.Add(new DiscreteObjectKeyFrame(current, KeyTime.FromTimeSpan(TimeSpan.Zero)));
             swap.KeyFrames.Add(new DiscreteObjectKeyFrame(target, KeyTime.FromTimeSpan(middle)));
             CompactMenuIcon.BeginAnimation(System.Windows.Shapes.Path.DataProperty, swap);
         }
 
-        // side: -1 = kiri island, +1 = kanan island
         private void ShowPill(Border pill, ScaleTransform scale, TranslateTransform translate, int side)
         {
             double half = IslandBorder.ActualWidth / 2;
-            double targetX = side * (half + 10 + pill.Width / 2);   // di samping island
-            double startX = side * (half - 20);                     // muncul dari tepi island
+            double targetX = side * (half + 10 + pill.Width / 2);
+            double startX = side * (half - 20);
 
             pill.Visibility = Visibility.Visible;
 
@@ -732,12 +795,11 @@ namespace DynamicIslandDesktop
             else ShowSettingsPanel();
         }
 
-        // Panel membentang dari tepi kiri pill Setting sampai tepi kanan island
         private (double Width, double CenterX) SettingsPanelGeometry(double islandWidth)
         {
             double half = islandWidth / 2;
-            double left = -(half + 10 + SettingsPill.Width);   // tepi kiri pill Setting
-            double right = half;                               // tepi kanan island
+            double left = -(half + 10 + SettingsPill.Width);
+            double right = half;
             return (right - left, (left + right) / 2);
         }
 
@@ -747,9 +809,8 @@ namespace DynamicIslandDesktop
 
             if (isDocked)
             {
-                // Panel di sebelah pill Setting (sisi yang sama dengan pill), sejajar dengan pill tersebut
                 width = 274;
-                double pillEdge = DockedWidth / 2 + 10 + SettingsPill.Width;   // tepi pill terjauh dari tengah
+                double pillEdge = DockedWidth / 2 + 10 + SettingsPill.Width;
                 centerX = PillSide * (pillEdge + 8 + width / 2);
                 top = 14;
             }
@@ -800,7 +861,6 @@ namespace DynamicIslandDesktop
             SettingsPanel.BeginAnimation(UIElement.OpacityProperty, fade);
         }
 
-        // Saat island berubah ukuran (mode lirik + slider), pill dan panel ikut menyesuaikan
         private void RepositionMenu(double islandWidth, double islandHeight)
         {
             if (!isMenuVisible) return;
@@ -837,7 +897,6 @@ namespace DynamicIslandDesktop
             else ShowMenu();
         }
 
-        // Ikon titik tiga berputar 360°, bentuk berganti di tengah putaran, warna hijau <-> merah
         private void AnimateDockMenuButton(bool toClose)
         {
             var total = TimeSpan.FromMilliseconds(400);
@@ -861,7 +920,6 @@ namespace DynamicIslandDesktop
             DockMenuButton.BeginAnimation(ContentControl.ContentProperty, swap);
         }
 
-        // Pill Setting/Keluar sedikit membesar saat di-hover
         private void Pill_MouseEnter(object sender, MouseEventArgs e) => ScalePill(sender, 1.08);
         private void Pill_MouseLeave(object sender, MouseEventArgs e) => ScalePill(sender, 1.0);
 
@@ -876,17 +934,24 @@ namespace DynamicIslandDesktop
 
         private void ExitPill_Click(object sender, MouseButtonEventArgs e) => ExitWithAnimation();
 
-        // ================= ANIMASI KELUAR (KEBALIKAN INTRO) =================
+        // ================= ANIMASI KELUAR =================
         private void ExitWithAnimation()
         {
             if (isExiting) return;
             isExiting = true;
-            isIntroPlaying = true;   // blokir hover selama animasi keluar
+            isIntroPlaying = true;
             vm.StopTimers();
+            beatService.Stop();
             HideMenu();
 
             if (isDocked)
             {
+                AlbumContainer.VerticalAlignment = VerticalAlignment.Top;
+                AlbumContainer.Margin = new Thickness(0, 4, 0, 0);
+                AlbumContainer.Visibility = Visibility.Visible;
+                AlbumContainer.BeginAnimation(UIElement.OpacityProperty,
+                    new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)));
+
                 DockControls.BeginAnimation(UIElement.OpacityProperty,
                     new DoubleAnimation(0, TimeSpan.FromMilliseconds(200)));
                 IslandBorder.BeginAnimation(FrameworkElement.HeightProperty, new DoubleAnimation
@@ -899,12 +964,11 @@ namespace DynamicIslandDesktop
             }
             HideLyricBubble(immediate: true);
 
-            // 1. Judul/lirik dan ikon menu memudar
             var fade = new DoubleAnimation { To = 0, Duration = TimeSpan.FromMilliseconds(250) };
             CompactTitleText.BeginAnimation(UIElement.OpacityProperty, fade);
+            CompactBeatChart.BeginAnimation(UIElement.OpacityProperty, fade);
             CompactMenuIcon.BeginAnimation(UIElement.OpacityProperty, fade);
 
-            // 2. Island menyempit ke tengah, album art ikut bergeser ke tengah
             var widthAnim = new DoubleAnimation
             {
                 To = 48,
@@ -914,7 +978,6 @@ namespace DynamicIslandDesktop
             };
             IslandBorder.BeginAnimation(FrameworkElement.WidthProperty, widthAnim);
 
-            // 3. Album art mengecil dan hilang
             var shrink = new DoubleAnimation
             {
                 To = 0.3,
@@ -932,7 +995,6 @@ namespace DynamicIslandDesktop
                 Duration = TimeSpan.FromMilliseconds(300)
             });
 
-            // 4. Island ikut menghilang, lalu aplikasi ditutup
             var islandFade = new DoubleAnimation
             {
                 To = 0,
@@ -941,6 +1003,154 @@ namespace DynamicIslandDesktop
             };
             islandFade.Completed += (s, e) => Application.Current.Shutdown();
             IslandBorder.BeginAnimation(UIElement.OpacityProperty, islandFade);
+        }
+
+        // ================= BEAT CHART DI PILL BAWAH ALBUM =================
+        private void OnBeatUpdated(float rawEnergy)
+        {
+            lastRealBeatTick = Environment.TickCount64;
+            currentBeatEnergy = Math.Max(currentBeatEnergy * 0.45, Math.Clamp(rawEnergy * 1.4f, 0f, 1f));
+        }
+
+        // Perbarui OnChartTimerTick() & ApplyBeatChartHeights():
+        private void OnChartTimerTick()
+        {
+            // Berjalan saat docked ATAU saat mode compact (tidak sedang di-hover/expanded)
+            bool shouldAnimate = (isDocked || !isExpanded) && !isExiting && vm.IsPlaying;
+            if (!shouldAnimate)
+            {
+                chartTimer.Stop();
+                currentBeatEnergy = 0;
+                ApplyBeatChartHeights(0);
+                return;
+            }
+
+            double energy = currentBeatEnergy;
+            if (Environment.TickCount64 - lastRealBeatTick > 250 || energy < 0.15)
+            {
+                double t = Environment.TickCount64 * 0.009;
+                double beatPulse = Math.Pow(0.5 + 0.5 * Math.Sin(t * 2.4), 1.6);
+                energy = Math.Max(energy, 0.28 + 0.65 * beatPulse);
+            }
+            else
+            {
+                currentBeatEnergy *= 0.88;
+            }
+
+            ApplyBeatChartHeights(energy);
+        }
+
+        private void ApplyBeatChartHeights(double energy)
+        {
+            double clamped = Math.Clamp(energy, 0.0, 1.0);
+            double phase = Environment.TickCount64 * 0.015;
+
+            // 1. Update 7 batang di mode Docked
+            if (beatBars != null)
+            {
+                const double minH = 2.5, maxH = 11.0;
+                int center = beatBars.Length / 2;
+                double maxDist = Math.Max(1.0, beatBars.Length / 2.0);
+
+                for (int i = 0; i < beatBars.Length; i++)
+                {
+                    double dome = 1.0 - 0.35 * (Math.Abs(i - center) / maxDist);
+                    double wave = 0.55 + 0.45 * Math.Sin(phase + i * 1.15);
+                    double target = clamped * dome * wave;
+
+                    barLevels[i] = target > barLevels[i]
+                        ? barLevels[i] * 0.25 + target * 0.75
+                        : barLevels[i] * 0.72 + target * 0.28;
+
+                    if (beatBars[i] != null)
+                        beatBars[i].Height = minH + (maxH - minH) * Math.Clamp(barLevels[i], 0.0, 1.0);
+                }
+            }
+
+            // 2. Update 5 batang di mode Compact (tidak di-hover)
+            if (compactBeatBars != null)
+            {
+                const double minH = 3.5, maxH = 14.0;
+                int center = compactBeatBars.Length / 2;
+                double maxDist = Math.Max(1.0, compactBeatBars.Length / 2.0);
+
+                for (int i = 0; i < compactBeatBars.Length; i++)
+                {
+                    double dome = 1.0 - 0.45 * (Math.Abs(i - center) / maxDist);
+                    double wave = 0.55 + 0.45 * Math.Sin(phase + i * 1.3);
+                    double target = clamped * dome * wave;
+
+                    compactBarLevels[i] = target > compactBarLevels[i]
+                        ? compactBarLevels[i] * 0.25 + target * 0.75
+                        : compactBarLevels[i] * 0.72 + target * 0.28;
+
+                    if (compactBeatBars[i] != null)
+                        compactBeatBars[i].Height = minH + (maxH - minH) * Math.Clamp(compactBarLevels[i], 0.0, 1.0);
+                }
+            }
+        }
+        // ================= RING TIMESTAMP DI DOCK ALBUM =================
+        private void UpdateDockProgressArc(double percent)
+        {
+            if (DockProgressArc == null) return;
+
+            double clamped = Math.Clamp(percent, 0.0, 100.0);
+            if (clamped <= 0.1)
+            {
+                DockProgressArc.Data = null;
+                return;
+            }
+
+            const double size = 44.0;
+            const double strokeThickness = 2.5;
+            double radius = (size - strokeThickness) / 2.0; // pas di tengah ketebalan stroke
+            double cx = size / 2.0;
+            double cy = size / 2.0;
+
+            // Jika mendekati 100%, gambar lingkaran penuh agar tidak ada celah kecil di ujung
+            if (clamped >= 99.8)
+            {
+                var fullGeo = new EllipseGeometry(new Point(cx, cy), radius, radius);
+                fullGeo.Freeze();
+                DockProgressArc.Data = fullGeo;
+                return;
+            }
+
+            double sweepAngle = 360.0 * (clamped / 100.0);
+            double startRad = -Math.PI / 2.0; // mulai dari jam 12 (atas)
+            double endRad = startRad + (sweepAngle * Math.PI / 180.0);
+
+            var startPoint = new Point(
+                cx + radius * Math.Cos(startRad),
+                cy + radius * Math.Sin(startRad));
+
+            var endPoint = new Point(
+                cx + radius * Math.Cos(endRad),
+                cy + radius * Math.Sin(endRad));
+
+            bool isLargeArc = sweepAngle > 180.0;
+
+            var pathFigure = new PathFigure
+            {
+                StartPoint = startPoint,
+                IsClosed = false,
+                IsFilled = false
+            };
+
+            pathFigure.Segments.Add(new ArcSegment
+            {
+                Point = endPoint,
+                Size = new Size(radius, radius),
+                RotationAngle = 0,
+                IsLargeArc = isLargeArc,
+                SweepDirection = SweepDirection.Clockwise,
+                IsStroked = true
+            });
+
+            var pathGeo = new PathGeometry();
+            pathGeo.Figures.Add(pathFigure);
+            pathGeo.Freeze();
+            DockProgressArc.Data = pathGeo;
         }
     }
 }

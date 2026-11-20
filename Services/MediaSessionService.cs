@@ -8,10 +8,6 @@ using Windows.Storage.Streams;
 
 namespace DynamicIslandDesktop.Services
 {
-    /// <summary>
-    /// Pembungkus Windows Media Transport Controls. Tidak tahu apa pun tentang View/ViewModel;
-    /// semua event dikirim kembali ke thread UI.
-    /// </summary>
     public class MediaSessionService
     {
         private GlobalSystemMediaTransportControlsSessionManager? manager;
@@ -19,13 +15,10 @@ namespace DynamicIslandDesktop.Services
         private SynchronizationContext? ui;
         private int mediaVersion;
 
-        /// <summary>Info lagu berubah. null = tidak ada sesi media.</summary>
         public event Action<MediaInfo?>? MediaChanged;
-
-        /// <summary>Status play/pause berubah (true = sedang diputar).</summary>
         public event Action<bool>? PlaybackChanged;
+        public event Action? TimelineChanged; // <-- BARU: untuk seek / perubahan durasi
 
-        /// <summary>Harus dipanggil dari thread UI.</summary>
         public async Task InitializeAsync()
         {
             ui = SynchronizationContext.Current;
@@ -33,9 +26,7 @@ namespace DynamicIslandDesktop.Services
             manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
             if (manager == null) return;
 
-            // Event ketika aplikasi pemutar berubah (misal dari Spotify pindah ke Chrome/YouTube)
             manager.CurrentSessionChanged += (s, _) => Post(() => AttachSession(s.GetCurrentSession()));
-
             AttachSession(manager.GetCurrentSession());
         }
 
@@ -64,30 +55,46 @@ namespace DynamicIslandDesktop.Services
         // ================= INFO WAKTU =================
         public int GetDurationSeconds()
         {
-            try
-            {
-                var tl = session?.GetTimelineProperties();
-                return tl == null ? 0 : (int)(tl.EndTime - tl.StartTime).TotalSeconds;
-            }
-            catch { return 0; }
+            var (_, duration) = GetTimeline();
+            return (int)duration.TotalSeconds;
         }
 
-        /// <summary>Posisi lagu saat ini, diinterpolasi dengan waktu sejak update terakhir agar halus.</summary>
         public TimeSpan? GetPosition()
         {
             if (session == null) return null;
+            var (pos, _) = GetTimeline();
+            return pos;
+        }
+
+        /// <summary>Mengambil posisi berjalan dan total durasi sekaligus.</summary>
+        public (TimeSpan Position, TimeSpan Duration) GetTimeline()
+        {
+            if (session == null) return (TimeSpan.Zero, TimeSpan.Zero);
 
             try
             {
                 var tl = session.GetTimelineProperties();
                 var pb = session.GetPlaybackInfo();
 
-                TimeSpan pos = tl.Position;
-                if (pb.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+                TimeSpan duration = tl.EndTime - tl.StartTime;
+                if (duration < TimeSpan.Zero) duration = TimeSpan.Zero;
+
+                TimeSpan pos = tl.Position - tl.StartTime;
+                if (pb.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing
+                    && tl.LastUpdatedTime != default)
+                {
                     pos += DateTimeOffset.Now - tl.LastUpdatedTime;
-                return pos;
+                }
+
+                if (pos < TimeSpan.Zero) pos = TimeSpan.Zero;
+                if (duration > TimeSpan.Zero && pos > duration) pos = duration;
+
+                return (pos, duration);
             }
-            catch { return null; }
+            catch
+            {
+                return (TimeSpan.Zero, TimeSpan.Zero);
+            }
         }
 
         // ================= INTERNAL =================
@@ -97,30 +104,37 @@ namespace DynamicIslandDesktop.Services
             {
                 session.MediaPropertiesChanged -= Session_MediaPropertiesChanged;
                 session.PlaybackInfoChanged -= Session_PlaybackInfoChanged;
+                session.TimelinePropertiesChanged -= Session_TimelinePropertiesChanged;
             }
 
             session = newSession;
-            mediaVersion++;   // batalkan pembacaan thumbnail yang masih berjalan
+            mediaVersion++;
 
             if (session == null)
             {
                 MediaChanged?.Invoke(null);
                 PlaybackChanged?.Invoke(false);
+                TimelineChanged?.Invoke();
                 return;
             }
 
             session.MediaPropertiesChanged += Session_MediaPropertiesChanged;
             session.PlaybackInfoChanged += Session_PlaybackInfoChanged;
+            session.TimelinePropertiesChanged += Session_TimelinePropertiesChanged;
 
             _ = RefreshMediaAsync();
             RaisePlayback();
+            TimelineChanged?.Invoke();
         }
 
         private void Session_MediaPropertiesChanged(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args)
             => Post(() => _ = RefreshMediaAsync());
 
         private void Session_PlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, PlaybackInfoChangedEventArgs args)
-            => Post(RaisePlayback);
+            => Post(() => { RaisePlayback(); TimelineChanged?.Invoke(); });
+
+        private void Session_TimelinePropertiesChanged(GlobalSystemMediaTransportControlsSession sender, TimelinePropertiesChangedEventArgs args)
+            => Post(() => TimelineChanged?.Invoke());
 
         private async Task RefreshMediaAsync()
         {
@@ -136,10 +150,10 @@ namespace DynamicIslandDesktop.Services
 
                 var thumb = await LoadThumbnailAsync(props.Thumbnail);
 
-                // Abaikan hasil jika lagu/sesi sudah berganti selama proses
                 if (version != mediaVersion || s != session) return;
 
                 MediaChanged?.Invoke(new MediaInfo(props.Title ?? "", props.Artist ?? "", thumb));
+                TimelineChanged?.Invoke();
             }
             catch { }
         }
@@ -155,7 +169,6 @@ namespace DynamicIslandDesktop.Services
             catch { }
         }
 
-        // Mengembalikan data gambar mentah; pengubahan ke gambar WPF dilakukan di View (converter)
         private static async Task<byte[]?> LoadThumbnailAsync(IRandomAccessStreamReference? thumbnail)
         {
             if (thumbnail == null) return null;
@@ -171,7 +184,6 @@ namespace DynamicIslandDesktop.Services
             catch { return null; }
         }
 
-        // Event WinRT datang dari thread lain, jadi kembalikan ke thread UI
         private void Post(Action action)
         {
             if (ui == null) action();

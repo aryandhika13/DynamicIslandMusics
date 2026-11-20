@@ -13,6 +13,7 @@
 
     <Window.Resources>
         <helpers:BytesToImageConverter x:Key="BytesToImage"/>
+
         <!-- Teks compact: saat mode lirik, membungkus ke baris berikutnya (maks 3 baris) -->
         <Style x:Key="CompactTextStyle" TargetType="TextBlock">
             <Style.Triggers>
@@ -23,9 +24,33 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+
         <!-- Ikon lingkaran-chevron (dari SVG viewBox 0 0 20 20) -->
         <StreamGeometry x:Key="ChevronCircleIcon">F1 M10,17 A7,7 0 1 1 10,3 A7,7 0 0 1 10,17 Z M2,10 A8,8 0 1 0 18,10 A8,8 0 0 0 2,10 Z M8.15,13.15 A0.5,0.5 0 0 0 8.85,13.85 L12.35,10.35 A0.5,0.5 0 0 0 12.35,9.65 L8.85,6.15 A0.5,0.5 0 1 0 8.15,6.85 L11.29,10 L8.15,13.15 Z</StreamGeometry>
         <StreamGeometry x:Key="CloseCircleIcon">F1 M10,17 A7,7 0 1 1 10,3 A7,7 0 0 1 10,17 Z M2,10 A8,8 0 1 0 18,10 A8,8 0 0 0 2,10 Z M7.354,6.646 L13.354,12.646 L12.646,13.354 L6.646,7.354 Z M12.646,6.646 L13.354,7.354 L7.354,13.354 L6.646,12.646 Z</StreamGeometry>
+
+        <!-- Progress bar tipis bergaya modern seperti gambar -->
+        <Style x:Key="TrackProgressBarStyle" TargetType="ProgressBar">
+            <Setter Property="Height" Value="4"/>
+            <Setter Property="Minimum" Value="0"/>
+            <Setter Property="Maximum" Value="100"/>
+            <Setter Property="Background" Value="#252A28"/>
+            <Setter Property="Foreground" Value="#1DB954"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Grid SnapsToDevicePixels="True">
+                            <Border CornerRadius="2" Background="{TemplateBinding Background}"/>
+                            <Border x:Name="PART_Track" CornerRadius="2" Background="Transparent"/>
+                            <Border x:Name="PART_Indicator" CornerRadius="2"
+                                    Background="{TemplateBinding Foreground}"
+                                    HorizontalAlignment="Left"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <!-- Style tombol ikon: tanpa kotak/border, hanya ikon hijau -->
         <Style x:Key="IconButtonStyle" TargetType="Button">
@@ -33,7 +58,7 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
-            <Setter Property="FontSize" Value="20"/>
+            <Setter Property="FontSize" Value="18"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
@@ -64,8 +89,7 @@
 
         <!-- Tombol lirik: redup saat nonaktif, terang saat mode lirik aktif -->
         <Style x:Key="LyricsButtonStyle" TargetType="Button" BasedOn="{StaticResource IconButtonStyle}">
-            <Setter Property="FontSize" Value="18"/>
-            <Setter Property="Opacity" Value="0.5"/>
+            <Setter Property="Opacity" Value="0.55"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding ShowLyrics}" Value="True">
                     <Setter Property="Opacity" Value="1"/>
@@ -73,7 +97,7 @@
             </Style.Triggers>
         </Style>
 
-        <!-- Judul & artis: tampil saat mode lirik mati -->
+        <!-- Info lagu: tampil saat mode lirik mati -->
         <Style x:Key="InfoPanelStyle" TargetType="StackPanel">
             <Setter Property="Visibility" Value="Visible"/>
             <Style.Triggers>
@@ -92,14 +116,98 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+
+        <!-- ===== Kapsul vertikal (saat island menempel di kiri/kanan layar) ===== -->
+        <Color x:Key="DockAccentColor">#FF1DB954</Color>
+        <SolidColorBrush x:Key="DockAccentBrush" Color="{StaticResource DockAccentColor}"/>
+        <SolidColorBrush x:Key="DockIconBrush" Color="#FFCFE8DD"/>
+        <LinearGradientBrush x:Key="DockedBackground" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#FF1A2723" Offset="0"/>
+            <GradientStop Color="#FF0B100E" Offset="1"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="DockedBorderBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#FF3F6B5A" Offset="0"/>
+            <GradientStop Color="#FF1D2B25" Offset="1"/>
+        </LinearGradientBrush>
+        <DropShadowEffect x:Key="DockedGlow" Color="{StaticResource DockAccentColor}"
+                          BlurRadius="24" ShadowDepth="0" Opacity="0.25"/>
+        <LinearGradientBrush x:Key="BubbleBackground" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#FF1C2622" Offset="0"/>
+            <GradientStop Color="#FF121816" Offset="1"/>
+        </LinearGradientBrush>
+        <SolidColorBrush x:Key="BubbleBorder" Color="#FF2D3D36"/>
+
+        <Style x:Key="DockIconButtonStyle" TargetType="Button" BasedOn="{StaticResource IconButtonStyle}">
+            <Setter Property="Foreground" Value="{StaticResource DockIconBrush}"/>
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+
+        <Style x:Key="DockPlayButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource DockAccentBrush}"/>
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Width" Value="36"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid x:Name="Root" RenderTransformOrigin="0.5,0.5">
+                            <Ellipse x:Name="Ring" Fill="#FF0F2B23"
+                                     Stroke="{StaticResource DockAccentBrush}" StrokeThickness="1.5">
+                                <Ellipse.Effect>
+                                    <DropShadowEffect Color="{StaticResource DockAccentColor}"
+                                                      BlurRadius="14" ShadowDepth="0" Opacity="0.65"/>
+                                </Ellipse.Effect>
+                            </Ellipse>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Ring" Property="Fill" Value="#FF15402F"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.9" ScaleY="0.9"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DockLyricsDotStyle" TargetType="Ellipse">
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding ShowLyrics}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="DockStatusDotStyle" TargetType="Ellipse">
+            <Setter Property="Fill" Value="{StaticResource DockAccentBrush}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsPlaying}" Value="False">
+                    <Setter Property="Fill" Value="#FF6B7B74"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
 
     <Grid>
         <!-- Island Container -->
         <Border x:Name="IslandBorder" 
-            Background="#0F0F0F" 
-            CornerRadius="25" 
-            Height="45" Width="48"
+            Background="{StaticResource DockedBackground}"
+            BorderBrush="{StaticResource DockedBorderBrush}"
+            BorderThickness="1"
+            CornerRadius="23" 
+            Height="46" Width="48"
             HorizontalAlignment="Center" 
             VerticalAlignment="Top"
             Margin="0,10,0,0"
@@ -112,24 +220,27 @@
             </Border.RenderTransform>
 
             <Border.Effect>
-                <DropShadowEffect BlurRadius="15" ShadowDepth="3" Opacity="0.5" Color="Black"/>
+                <DropShadowEffect Color="{StaticResource DockAccentColor}" BlurRadius="24" ShadowDepth="0" Opacity="0.25"/>
             </Border.Effect>
 
-            <Grid x:Name="MainGrid" Margin="8,4">
+            <Grid x:Name="MainGrid" Margin="6,4">
 
-                <!-- 1. TAMPILAN COMPACT (SAAT ISLAND KECIL) -->
+                <!-- 1. TAMPILAN COMPACT (TIDAK DI-HOVER: ALBUM KIRI, JUDUL TENGAH, PANAH HIJAU KANAN) -->
                 <Grid x:Name="CompactView" Visibility="Visible">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
-                    <Border x:Name="AlbumContainer" Grid.Column="0" Width="30" Height="30" Background="#222" CornerRadius="15" Opacity="0" RenderTransformOrigin="0.5,0.5">
+                    <Border x:Name="AlbumContainer" Grid.Column="0" Width="32" Height="32"
+                            Background="#1B1F1D" CornerRadius="16" Opacity="0"
+                            RenderTransformOrigin="0.5,0.5">
                         <Border.RenderTransform>
                             <ScaleTransform x:Name="IntroScale" ScaleX="0.3" ScaleY="0.3"/>
                         </Border.RenderTransform>
-                        <Ellipse x:Name="CompactAlbumArt" Width="30" Height="30" RenderTransformOrigin="0.5,0.5">
+                        <Ellipse x:Name="CompactAlbumArt" Width="32" Height="32" RenderTransformOrigin="0.5,0.5">
                             <Ellipse.Fill>
                                 <ImageBrush ImageSource="{Binding AlbumArt, Converter={StaticResource BytesToImage}}" Stretch="UniformToFill"/>
                             </Ellipse.Fill>
@@ -139,47 +250,157 @@
                         </Ellipse>
                     </Border>
 
-                    <!-- Tombol kontrol vertikal: hanya tampil saat island menempel di kanan -->
-                    <StackPanel x:Name="DockControls" Grid.Column="0" Grid.ColumnSpan="3"
-                        Orientation="Vertical" HorizontalAlignment="Center" VerticalAlignment="Bottom"
-                        Margin="0,0,0,2" Visibility="Collapsed">
-                            <Button Style="{StaticResource IconButtonStyle}" FontSize="16"
-                                Content="&#xE892;" Command="{Binding PrevCommand}"/>
-                            <Button Style="{StaticResource IconButtonStyle}" FontSize="22"
-                                Content="{Binding PlayPauseGlyph}" Command="{Binding PlayPauseCommand}"/>
-                            <Button Style="{StaticResource IconButtonStyle}" FontSize="16"
-                                Content="&#xE893;" Command="{Binding NextCommand}"/>
-                            <Button Style="{StaticResource LyricsButtonStyle}" FontSize="16"
-                                Content="&#xE720;" Command="{Binding ToggleLyricsCommand}"/>
-                            <Button x:Name="DockMenuButton" Style="{StaticResource IconButtonStyle}" FontSize="16"
+                    <!-- Layout kapsul vertikal saat menempel di tepi layar -->
+                    <Grid x:Name="DockControls" Grid.Column="0" Grid.ColumnSpan="3" Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Album art bulat dengan ring timestamp progres lagu -->
+                        <Grid Grid.Row="0" Width="44" Height="44" Margin="0,4,0,0" HorizontalAlignment="Center">
+                            <!-- Track dasar redup (0-100%) -->
+                            <Ellipse Width="44" Height="44"
+                                Stroke="#FF1E352B" StrokeThickness="2.5"
+                                Fill="Transparent" IsHitTestVisible="False"/>
+
+                            <!-- Ring progres waktu lagu (0% -> 100%) -->
+                            <Path x:Name="DockProgressArc"
+                                Width="44" Height="44"
+                                Stroke="{StaticResource DockAccentBrush}"
+                                StrokeThickness="2.5"
+                                StrokeStartLineCap="Round"
+                                StrokeEndLineCap="Round"
+                                IsHitTestVisible="False">
+                                <Path.Effect>
+                                    <DropShadowEffect Color="{StaticResource DockAccentColor}"
+                              BlurRadius="8" ShadowDepth="0" Opacity="0.65"/>
+                                </Path.Effect>
+                            </Path>
+
+                            <!-- Foto album di bagian dalam -->
+                            <Border x:Name="DockAlbum" Width="38" Height="38" CornerRadius="19"
+                                Padding="1.5" Background="#222222"
+                                HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Ellipse RenderTransformOrigin="0.5,0.5">
+                                    <Ellipse.Fill>
+                                        <ImageBrush ImageSource="{Binding AlbumArt, Converter={StaticResource BytesToImage}}" Stretch="UniformToFill"/>
+                                    </Ellipse.Fill>
+                                    <Ellipse.RenderTransform>
+                                        <RotateTransform x:Name="DockAlbumRotate" Angle="0"/>
+                                    </Ellipse.RenderTransform>
+                                </Ellipse>
+                            </Border>
+
+                            <Ellipse Width="11" Height="11" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                Margin="0,0,-2,-2" Stroke="#FF0B100E" StrokeThickness="2"
+                                IsHitTestVisible="False" Style="{StaticResource DockStatusDotStyle}">
+                                <Ellipse.Effect>
+                                    <DropShadowEffect Color="{StaticResource DockAccentColor}" BlurRadius="8"
+                                    ShadowDepth="0" Opacity="0.8"/>
+                                </Ellipse.Effect>
+                            </Ellipse>
+                        </Grid>
+
+                        <!-- Pill kecil di bawah album art: chart beat / equalizer -->
+                        <Border Grid.Row="1" Width="42" Height="18" CornerRadius="9" Margin="0,6,0,0"
+                            Background="#FF161E1B" BorderBrush="#FF26332D" BorderThickness="1"
+                            Padding="5,3">
+                            <Grid x:Name="BeatChartHost" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border x:Name="BeatBar0" Grid.Column="0" Width="2.2" Height="3" CornerRadius="1.1" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                <Border x:Name="BeatBar1" Grid.Column="1" Width="2.2" Height="5" CornerRadius="1.1" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                <Border x:Name="BeatBar2" Grid.Column="2" Width="2.2" Height="7" CornerRadius="1.1" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                <Border x:Name="BeatBar3" Grid.Column="3" Width="2.2" Height="9" CornerRadius="1.1" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                <Border x:Name="BeatBar4" Grid.Column="4" Width="2.2" Height="7" CornerRadius="1.1" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                <Border x:Name="BeatBar5" Grid.Column="5" Width="2.2" Height="5" CornerRadius="1.1" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                <Border x:Name="BeatBar6" Grid.Column="6" Width="2.2" Height="3" CornerRadius="1.1" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+
+                        <StackPanel Grid.Row="2" VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <Button Style="{StaticResource DockIconButtonStyle}"
+                                    Content="&#xE892;" Command="{Binding PrevCommand}" Margin="0,2"/>
+                            <Button Style="{StaticResource DockPlayButtonStyle}"
+                                    Content="{Binding PlayPauseGlyph}"
+                                    Command="{Binding PlayPauseCommand}" Margin="0,2"/>
+                            <Button Style="{StaticResource DockIconButtonStyle}"
+                                    Content="&#xE893;" Command="{Binding NextCommand}" Margin="0,2"/>
+                            <Grid Margin="0,2">
+                                <Button Style="{StaticResource LyricsButtonStyle}" FontSize="15"
+                                        Content="&#xE720;" Command="{Binding ToggleLyricsCommand}"/>
+                                <Ellipse Width="6" Height="6" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                         Margin="0,5,5,0" Fill="{StaticResource DockAccentBrush}"
+                                         IsHitTestVisible="False" Style="{StaticResource DockLyricsDotStyle}">
+                                    <Ellipse.Effect>
+                                        <DropShadowEffect Color="{StaticResource DockAccentColor}" BlurRadius="6"
+                                                          ShadowDepth="0" Opacity="0.9"/>
+                                    </Ellipse.Effect>
+                                </Ellipse>
+                            </Grid>
+                        </StackPanel>
+
+                        <Button x:Name="DockMenuButton" Grid.Row="3" Style="{StaticResource IconButtonStyle}"
+                                FontSize="16" HorizontalAlignment="Center"
                                 Content="&#xE712;" Click="DockMenuButton_Click" RenderTransformOrigin="0.5,0.5">
-                                <Button.Foreground>
-                                    <SolidColorBrush x:Name="DockMenuBrush" Color="#1DB954"/>
-                                </Button.Foreground>
+                            <Button.Foreground>
+                                <SolidColorBrush x:Name="DockMenuBrush" Color="#1DB954"/>
+                            </Button.Foreground>
                             <Button.RenderTransform>
                                 <RotateTransform x:Name="DockMenuRotate" Angle="0"/>
                             </Button.RenderTransform>
                         </Button>
-                    </StackPanel>
+                    </Grid>
 
-                    <!-- Area hover: hanya bagian tengah (judul/lirik) -->
+                    <!-- Area hover: bagian tengah (judul / lirik) -->
                     <Border x:Name="HoverZone" Grid.Column="1" Background="Transparent"
                         MouseEnter="HoverZone_MouseEnter">
                         <TextBlock x:Name="CompactTitleText" Style="{StaticResource CompactTextStyle}"
-                           Text="{Binding CompactText}" Opacity="0"
-                           Foreground="White" FontSize="11" FontWeight="SemiBold"
-                           helpers:TextFit.MaxFontSize="{Binding CompactFontSize}"
-                           VerticalAlignment="Center" HorizontalAlignment="Center"
-                           TextTrimming="CharacterEllipsis" Margin="8,0"/>
+                            Text="{Binding CompactText}" Opacity="0"
+                            Foreground="#F4F7F5" FontSize="12" FontWeight="SemiBold"
+                            helpers:TextFit.MaxFontSize="{Binding CompactFontSize}"
+                            VerticalAlignment="Center" HorizontalAlignment="Center"
+                        TextTrimming="CharacterEllipsis" Margin="6,0"/>
                     </Border>
 
-                    <!-- Ikon menu: bisa diklik, memunculkan pill "Setting" dan "Keluar" -->
-                    <Border x:Name="MenuIconButton" Grid.Column="2" Background="Transparent"
-                        Cursor="Hand" Padding="4,0"
+                    <!-- Chart beat 5 batang hijau di sebelah kiri panah menu (seperti gambar referensi) -->
+                    <Grid x:Name="CompactBeatChart" Grid.Column="2" Width="22" Height="16"
+                        Opacity="0" VerticalAlignment="Center" Margin="0,0,6,0"
+                        IsHitTestVisible="False">
+                        <Grid.Effect>
+                            <DropShadowEffect Color="#1DB954" BlurRadius="8" ShadowDepth="0" Opacity="0.7"/>
+                        </Grid.Effect>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border x:Name="CompactBar0" Grid.Column="0" Width="2.4" Height="4" CornerRadius="1.2" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        <Border x:Name="CompactBar1" Grid.Column="1" Width="2.4" Height="8" CornerRadius="1.2" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        <Border x:Name="CompactBar2" Grid.Column="2" Width="2.4" Height="12" CornerRadius="1.2" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        <Border x:Name="CompactBar3" Grid.Column="3" Width="2.4" Height="8" CornerRadius="1.2" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        <Border x:Name="CompactBar4" Grid.Column="4" Width="2.4" Height="4" CornerRadius="1.2" Background="#1DB954" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    </Grid>
+
+                    <!-- Ikon menu hijau di kanan -->
+                    <Border x:Name="MenuIconButton" Grid.Column="3" Background="Transparent"
+                        Cursor="Hand" Padding="2,0"
                         MouseLeftButtonDown="MenuIcon_Click">
                         <Path x:Name="CompactMenuIcon" Data="{StaticResource ChevronCircleIcon}"
-                            Width="18" Height="18" Stretch="Uniform"
-                            Opacity="0" VerticalAlignment="Center" Margin="0,0,4,0"
+                            Width="20" Height="20" Stretch="Uniform"
+                            Opacity="0" VerticalAlignment="Center" Margin="0,0,2,0"
                             RenderTransformOrigin="0.5,0.5">
                             <Path.Fill>
                                 <SolidColorBrush x:Name="MenuIconBrush" Color="#1DB954"/>
@@ -191,78 +412,93 @@
                     </Border>
                 </Grid>
 
-                <!-- 2. TAMPILAN EXPANDED (SAAT ISLAND BESAR) -->
-                <Grid x:Name="ExpandedView" Visibility="Collapsed" Margin="8">
+                <!-- 2. TAMPILAN EXPANDED (SAAT DI-HOVER: ALBUM KIRI, NOT BALOK + JUDUL + PROGRESS BAR KANAN, KONTROL BAWAH) -->
+                <Grid x:Name="ExpandedView" Visibility="Collapsed" Margin="10,8,10,6">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Info Lagu & Album Art Besar -->
+                    <!-- Baris atas: Album Art + Info/Progress -->
                     <Grid Grid.Row="0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
 
-                        <!-- Album Art Besar: sudut melengkung, gambar dipotong dari tengah -->
-                        <Grid Grid.Column="0" Width="65" Height="65">
-                            <Border CornerRadius="14" Background="#222"/>
+                        <!-- Album Art kotak membulat -->
+                        <Border Grid.Column="0" Width="68" Height="68" CornerRadius="14"
+                                Background="#1A1E1C" BorderBrush="#262C29" BorderThickness="1"
+                                VerticalAlignment="Center">
                             <Border CornerRadius="14">
                                 <Border.Background>
-                                    <ImageBrush ImageSource="{Binding AlbumArt, Converter={StaticResource BytesToImage}}" Stretch="UniformToFill"/>
+                                    <ImageBrush ImageSource="{Binding AlbumArt, Converter={StaticResource BytesToImage}}"
+                                                Stretch="UniformToFill"/>
                                 </Border.Background>
                             </Border>
-                        </Grid>
+                        </Border>
 
-                        <!-- Judul & Artis -->
-                        <StackPanel x:Name="InfoPanel" Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0"
-                                    Style="{StaticResource InfoPanelStyle}">
-                            <TextBlock Text="{Binding Title}" Foreground="White" FontSize="14" FontWeight="Bold" helpers:TextFit.MaxFontSize="{Binding InfoTitleFontSize}"
-                                TextTrimming="CharacterEllipsis"/>
-                            <TextBlock Text="{Binding Artist}" Foreground="#AAAAAA" FontSize="12" Margin="0,2,0,0"
-                                helpers:TextFit.MaxFontSize="{Binding InfoArtistFontSize}"
-                                TextTrimming="CharacterEllipsis"/>
+                        <!-- Bagian kanan: Ikon not balok + Judul + Progress bar + Durasi -->
+                        <StackPanel x:Name="InfoPanel" Grid.Column="1" VerticalAlignment="Center"
+                                    Margin="14,0,2,0" Style="{StaticResource InfoPanelStyle}">
+                            <TextBlock Text="&#xE8D6;" FontFamily="Segoe MDL2 Assets"
+                                       Foreground="#E8ECEA" FontSize="12" Margin="0,0,0,2"/>
+
+                            <TextBlock Text="{Binding Title}" Foreground="White" FontSize="15" FontWeight="Bold"
+                                       helpers:TextFit.MaxFontSize="{Binding InfoTitleFontSize}"
+                                       TextTrimming="CharacterEllipsis" Margin="0,0,0,7"/>
+
+                            <!-- Progress bar hijau -->
+                            <ProgressBar Style="{StaticResource TrackProgressBarStyle}"
+                                         Value="{Binding ProgressPercent}"/>
+
+                            <!-- Waktu berjalan & durasi -->
+                            <Grid Margin="0,4,0,0">
+                                <TextBlock Text="{Binding PositionText}"
+                                           Foreground="#7E8782" FontSize="10" HorizontalAlignment="Left"/>
+                                <TextBlock Text="{Binding DurationText}"
+                                           Foreground="#7E8782" FontSize="10" HorizontalAlignment="Right"/>
+                            </Grid>
                         </StackPanel>
 
-                        <!-- Lirik (menggantikan judul & artis saat tombol mic aktif) -->
-                        <StackPanel x:Name="LyricsPanel" Grid.Column="1" VerticalAlignment="Center" Margin="14,0,0,0"
-                                    Style="{StaticResource LyricsPanelStyle}">
+                        <!-- Mode Lirik (menggantikan blok kanan saat tombol mic aktif) -->
+                        <StackPanel x:Name="LyricsPanel" Grid.Column="1" VerticalAlignment="Center"
+                                    Margin="14,0,2,0" Style="{StaticResource LyricsPanelStyle}">
                             <TextBlock Text="{Binding CurrentLyric}" Foreground="White" FontSize="14" FontWeight="Bold"
-                                helpers:TextFit.MaxFontSize="{Binding LyricCurrentFontSize}"
-                                TextWrapping="Wrap" MaxHeight="{Binding LyricMaxHeight}" TextTrimming="CharacterEllipsis"/>
-                            <TextBlock Text="{Binding NextLyric}" Foreground="#777777" FontSize="11" Margin="0,3,0,0"
-                                helpers:TextFit.MaxFontSize="{Binding LyricNextFontSize}"
-                                TextTrimming="CharacterEllipsis"/>
+                                       helpers:TextFit.MaxFontSize="{Binding LyricCurrentFontSize}"
+                                       TextWrapping="Wrap" MaxHeight="{Binding LyricMaxHeight}" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="{Binding NextLyric}" Foreground="#7E8782" FontSize="11" Margin="0,3,0,0"
+                                       TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
                     </Grid>
 
-                    <!-- Tombol Kontrol Media (ikon hijau tanpa kotak) -->
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6,0,0">
+                    <!-- Baris bawah: 4 ikon kontrol media hijau tersebar merata -->
+                    <UniformGrid Grid.Row="1" Columns="4" Margin="4,8,4,0">
                         <Button Style="{StaticResource IconButtonStyle}"
-                            Content="&#xE892;" Command="{Binding PrevCommand}" Margin="10,0"/>
-
+                                Content="&#xE892;" Command="{Binding PrevCommand}"
+                                HorizontalAlignment="Center"/>
                         <Button Style="{StaticResource IconButtonStyle}"
-                            Content="{Binding PlayPauseGlyph}" FontSize="26"
-                            Command="{Binding PlayPauseCommand}" Margin="10,0"/>
-
+                                Content="{Binding PlayPauseGlyph}" FontSize="20"
+                                Command="{Binding PlayPauseCommand}"
+                                HorizontalAlignment="Center"/>
                         <Button Style="{StaticResource IconButtonStyle}"
-                            Content="&#xE893;" Command="{Binding NextCommand}" Margin="10,0"/>
-
+                                Content="&#xE893;" Command="{Binding NextCommand}"
+                                HorizontalAlignment="Center"/>
                         <Button Style="{StaticResource LyricsButtonStyle}"
-                            Content="&#xE720;" Command="{Binding ToggleLyricsCommand}" Margin="10,0"/>
-                    </StackPanel>
+                                Content="&#xE720;" Command="{Binding ToggleLyricsCommand}"
+                                HorizontalAlignment="Center"/>
+                    </UniformGrid>
                 </Grid>
 
             </Grid>
         </Border>
 
-        <!-- Pop-up lirik di sisi seberang island (posisi & arah ekor diatur dari kode) -->
+        <!-- Pop-up lirik di sisi seberang island -->
         <Grid x:Name="LyricBubble" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
             HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,100,436,0"
-            RenderTransformOrigin="1,1">
+            RenderTransformOrigin="1,0.5">
             <Grid.Effect>
-                <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.5" Color="Black"/>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="2" Opacity="0.5" Color="Black"/>
             </Grid.Effect>
             <Grid.RenderTransform>
                 <TransformGroup>
@@ -271,18 +507,57 @@
                 </TransformGroup>
             </Grid.RenderTransform>
 
-            <Border x:Name="LyricBubbleBody" MaxWidth="300" MinHeight="36" CornerRadius="18,18,3,18"
-            Background="#0F0F0F" Padding="16,9" Margin="0,0,8,0">
-                <TextBlock x:Name="LyricBubbleText" Foreground="White" FontWeight="SemiBold"
-                   FontSize="{Binding Settings.LyricFontSize}"
-                   TextWrapping="Wrap" MaxHeight="72" TextTrimming="CharacterEllipsis"/>
+            <Border x:Name="LyricBubbleBody" MaxWidth="340" MinHeight="56" CornerRadius="14"
+                    Background="{StaticResource BubbleBackground}"
+                    BorderBrush="{StaticResource BubbleBorder}" BorderThickness="1"
+                    Padding="12,10,18,10" Margin="0,0,8,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Ikon not musik dalam lingkaran -->
+                    <Border Grid.Column="0" Width="34" Height="34" CornerRadius="17"
+                            Background="#FF14312A" BorderBrush="#FF1B4A3B" BorderThickness="1"
+                            VerticalAlignment="Center" Margin="0,0,12,0">
+                        <TextBlock Text="&#x266A;" FontFamily="Segoe UI Symbol" FontSize="15"
+                                   Foreground="{StaticResource DockAccentBrush}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <!-- Dua badge: LIVE LYRICS + waktu -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <Border CornerRadius="9" Padding="8,2" Background="#FF123A2E"
+                                    BorderBrush="#FF1F6B52" BorderThickness="1">
+                                <TextBlock Text="LIVE LYRICS" Foreground="{StaticResource DockAccentBrush}"
+                                           FontSize="9" FontWeight="Bold"/>
+                            </Border>
+                            <Border CornerRadius="9" Padding="8,2" Margin="6,0,0,0" Background="#FF1A221F"
+                                    BorderBrush="#FF2B3631" BorderThickness="1">
+                                <TextBlock Text="{Binding PositionText, FallbackValue=''}"
+                                           Foreground="#FFA3B1AA" FontSize="9" FontWeight="SemiBold"/>
+                            </Border>
+                        </StackPanel>
+
+                        <TextBlock x:Name="LyricBubbleText" Foreground="White" FontWeight="Bold"
+                                   FontSize="{Binding Settings.LyricFontSize}"
+                                   TextWrapping="Wrap" MaxHeight="72" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </Grid>
             </Border>
 
-            <Path x:Name="LyricBubbleTail" Fill="#0F0F0F" Width="12" Height="12" Stretch="Fill"
-          Data="M0,0 C0,7 4,11 12,12 L0,12 Z"
-          HorizontalAlignment="Right" VerticalAlignment="Bottom"/>
+            <!-- Ekor menghadap kapsul, menyatu dengan LyricBubbleBody (arah & sisi diatur dari kode).
+                 Isi ekor menutup garis border body di pangkalnya; garis hanya digambar di dua sisi miring. -->
+            <Grid x:Name="LyricBubbleLink" Width="9" Height="12" Margin="0,22,0,0"
+                  VerticalAlignment="Top" HorizontalAlignment="Right" IsHitTestVisible="False">
+                <Path x:Name="LyricBubbleTailFill" Fill="#FF181F1D" Data="M 9,0 L 0,6 L 9,12 Z"/>
+                <Path x:Name="LyricBubbleTailLine" Stroke="{StaticResource BubbleBorder}" StrokeThickness="1"
+                      StrokeLineJoin="Round" Data="M 8.5,0 L 0.5,6 L 8.5,12"/>
+            </Grid>
         </Grid>
-        
+
         <!-- Pill kecil "Setting" di sebelah kiri island -->
         <Border x:Name="SettingsPill" Visibility="Collapsed" Opacity="0"
         Width="84" Height="36" CornerRadius="18" Background="#0F0F0F"
@@ -329,7 +604,7 @@
             </StackPanel>
         </Border>
 
-        <!-- Panel pengaturan: muncul di bawah island saat pill "Setting" diklik -->
+        <!-- Panel pengaturan -->
         <Border x:Name="SettingsPanel" Visibility="Collapsed" Opacity="0"
         Width="274" Background="#0F0F0F" CornerRadius="18" Padding="16,12"
         HorizontalAlignment="Center" VerticalAlignment="Top"
